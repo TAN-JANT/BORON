@@ -7,27 +7,27 @@ import struct
 if __name__ == "__main__":
     encodeds = [
         instructions.MOV_Instruction.R_IMM(
-            GPRegisters["al"], operands.Immediate(1, 1)
+            GPRegisters.al, operands.Immediate(1, 1)
         ),
         instructions.MOV_Instruction.R_IMM(
-            GPRegisters["rdi"], operands.Immediate(1, 4)
+            GPRegisters.rdi, operands.Immediate(1, 4)
         ),
         instructions.MOV_Instruction.R_IMM(
-            GPRegisters["rsi"], operands.SYMBOL("SYM1", 8)
+            GPRegisters.rsi, operands.SYMBOL("SYM1", 8)
         ),
         instructions.MOV_Instruction.R_IMM(
-            GPRegisters["rdx"], operands.SYMBOL("SYM2", 4)
+            GPRegisters.rdx, operands.SYMBOL("SYM2", 4)
         ),
         instructions.SyscallInstruction(),
         instructions.MOV_Instruction.R_IMM(
-            GPRegisters["rax"], operands.Immediate(31, 4)
+            GPRegisters.rax, operands.Immediate(31, 4)
         ),
-        instructions.DEC_Instruction.R(GPRegisters["rax"]),
+        instructions.DEC_Instruction.R(GPRegisters.rax),
         instructions.RET_Instruction()
     ]
 
     # -----------------------------
-    # BYTEARRAY OLUŞTUR
+    # BYTEARRAY OLUŞTUR 
     # -----------------------------
     b = bytearray()
     b += bytes("Tanjant", "utf-8")

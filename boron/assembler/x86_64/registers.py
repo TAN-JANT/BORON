@@ -1,8 +1,6 @@
 from __future__ import annotations
 from typing import Literal
 from dataclasses import dataclass
-from dataclasses import dataclass
-from typing import Literal
 
 
 @dataclass(frozen=True)
@@ -116,68 +114,99 @@ class SegmentRegister:
     def __init__(self,code:int):
         self.code = code
 
-SegmentRegisters = {
-    "es": SegmentRegister(0),
-    "cs": SegmentRegister(1),
-    "ss": SegmentRegister(2),
-    "ds": SegmentRegister(3),
-    "fs": SegmentRegister(4),
-    "gs": SegmentRegister(5),
-}
+class SegmentRegisters :
+    es = SegmentRegister(0)
+    cs = SegmentRegister(1)
+    ss = SegmentRegister(2)
+    ds = SegmentRegister(3)
+    fs = SegmentRegister(4)
+    gs = SegmentRegister(5)
 
-GPRegisters = {
+class GPRegisters :
     # --- 8-bit ---
-    "al" : GeneralPurposeRegister(0b000).make_8bit(),
-    "cl" : GeneralPurposeRegister(0b001).make_8bit(),
-    "dl" : GeneralPurposeRegister(0b010).make_8bit(),
-    "bl" : GeneralPurposeRegister(0b011).make_8bit(),
+    al = GeneralPurposeRegister(0b000).make_8bit()
+    cl = GeneralPurposeRegister(0b001).make_8bit()
+    dl = GeneralPurposeRegister(0b010).make_8bit()
+    bl = GeneralPurposeRegister(0b011).make_8bit()
 
     # --- high-8 registers (REX incompitable) ---
-    "ah" : GeneralPurposeRegister(0b100).make_8bit().make_rex_incompatible(),
-    "ch" : GeneralPurposeRegister(0b101).make_8bit().make_rex_incompatible(),
-    "dh" : GeneralPurposeRegister(0b110).make_8bit().make_rex_incompatible(),
-    "bh" : GeneralPurposeRegister(0b111).make_8bit().make_rex_incompatible(),
+    ah = GeneralPurposeRegister(0b100).make_8bit().make_rex_incompatible()
+    ch = GeneralPurposeRegister(0b101).make_8bit().make_rex_incompatible()
+    dh = GeneralPurposeRegister(0b110).make_8bit().make_rex_incompatible()
+    bh = GeneralPurposeRegister(0b111).make_8bit().make_rex_incompatible()
 
     # --- low-8 (requires REX ) ---
-    "spl" : GeneralPurposeRegister(0b100).make_8bit().require_rex(),
-    "bpl" : GeneralPurposeRegister(0b101).make_8bit().require_rex(),
-    "sil" : GeneralPurposeRegister(0b110).make_8bit().require_rex(),
-    "dil" : GeneralPurposeRegister(0b111).make_8bit().require_rex(),
+    spl = GeneralPurposeRegister(0b100).make_8bit().require_rex()
+    bpl = GeneralPurposeRegister(0b101).make_8bit().require_rex()
+    sil = GeneralPurposeRegister(0b110).make_8bit().require_rex()
+    dil = GeneralPurposeRegister(0b111).make_8bit().require_rex()
 
     # --- 16-bit ---
-    "ax" : GeneralPurposeRegister(0b000).make_16bit(),
-    "cx" : GeneralPurposeRegister(0b001).make_16bit(),
-    "dx" : GeneralPurposeRegister(0b010).make_16bit(),
-    "bx" : GeneralPurposeRegister(0b011).make_16bit(),
-    "sp" : GeneralPurposeRegister(0b100).make_16bit(),
-    "bp" : GeneralPurposeRegister(0b101).make_16bit(),
-    "si" : GeneralPurposeRegister(0b110).make_16bit(),
-    "di" : GeneralPurposeRegister(0b111).make_16bit(),
+    ax = GeneralPurposeRegister(0b000).make_16bit()
+    cx = GeneralPurposeRegister(0b001).make_16bit()
+    dx = GeneralPurposeRegister(0b010).make_16bit()
+    bx = GeneralPurposeRegister(0b011).make_16bit()
+    sp = GeneralPurposeRegister(0b100).make_16bit()
+    bp = GeneralPurposeRegister(0b101).make_16bit()
+    si = GeneralPurposeRegister(0b110).make_16bit()
+    di = GeneralPurposeRegister(0b111).make_16bit()
 
     # --- 32-bit ---
-    "eax" : GeneralPurposeRegister(0b000).make_32bit(),
-    "ecx" : GeneralPurposeRegister(0b001).make_32bit(),
-    "edx" : GeneralPurposeRegister(0b010).make_32bit(),
-    "ebx" : GeneralPurposeRegister(0b011).make_32bit(),
-    "esp" : GeneralPurposeRegister(0b100).make_32bit(),
-    "ebp" : GeneralPurposeRegister(0b101).make_32bit(),
-    "esi" : GeneralPurposeRegister(0b110).make_32bit(),
-    "edi" : GeneralPurposeRegister(0b111).make_32bit(),
+    eax = GeneralPurposeRegister(0b000).make_32bit()
+    ecx = GeneralPurposeRegister(0b001).make_32bit()
+    edx = GeneralPurposeRegister(0b010).make_32bit()
+    ebx = GeneralPurposeRegister(0b011).make_32bit()
+    esp = GeneralPurposeRegister(0b100).make_32bit()
+    ebp = GeneralPurposeRegister(0b101).make_32bit()
+    esi = GeneralPurposeRegister(0b110).make_32bit()
+    edi = GeneralPurposeRegister(0b111).make_32bit()
 
     # --- 64-bit ---
-    "rax" : GeneralPurposeRegister(0b000).make_64bit(),
-    "rcx" : GeneralPurposeRegister(0b001).make_64bit(),
-    "rdx" : GeneralPurposeRegister(0b010).make_64bit(),
-    "rbx" : GeneralPurposeRegister(0b011).make_64bit(),
-    "rsp" : GeneralPurposeRegister(0b100).make_64bit(),
-    "rbp" : GeneralPurposeRegister(0b101).make_64bit(),
-    "rsi" : GeneralPurposeRegister(0b110).make_64bit(),
-    "rdi" : GeneralPurposeRegister(0b111).make_64bit(),
-}
+    rax = GeneralPurposeRegister(0b000).make_64bit()
+    rcx = GeneralPurposeRegister(0b001).make_64bit()
+    rdx = GeneralPurposeRegister(0b010).make_64bit()
+    rbx = GeneralPurposeRegister(0b011).make_64bit()
+    rsp = GeneralPurposeRegister(0b100).make_64bit()
+    rbp = GeneralPurposeRegister(0b101).make_64bit()
+    rsi = GeneralPurposeRegister(0b110).make_64bit()
+    rdi = GeneralPurposeRegister(0b111).make_64bit()
 
-for i in range(8):
-    num = 8 + i
-    GPRegisters[f"r{num}"]   = GeneralPurposeRegister(i).make_64bit().require_expand()
-    GPRegisters[f"r{num}d"]  = GeneralPurposeRegister(i).make_32bit().require_expand()
-    GPRegisters[f"r{num}w"]  = GeneralPurposeRegister(i).make_16bit().require_expand()
-    GPRegisters[f"r{num}b"]  = GeneralPurposeRegister(i).make_8bit().require_expand().require_rex()
+    r8   = GeneralPurposeRegister(0b001).make_64bit().require_expand()
+    r8d  = GeneralPurposeRegister(0b001).make_32bit().require_expand()
+    r8w  = GeneralPurposeRegister(0b001).make_16bit().require_expand()
+    r8b  = GeneralPurposeRegister(0b001).make_8bit().require_expand().require_rex()
+
+    r9  = GeneralPurposeRegister(0b001).make_64bit().require_expand()
+    r9d = GeneralPurposeRegister(0b001).make_32bit().require_expand()
+    r9w = GeneralPurposeRegister(0b001).make_16bit().require_expand()
+    r9b = GeneralPurposeRegister(0b001).make_8bit().require_expand().require_rex()
+
+    r10  = GeneralPurposeRegister(0b010).make_64bit().require_expand()
+    r10d = GeneralPurposeRegister(0b010).make_32bit().require_expand()
+    r10w = GeneralPurposeRegister(0b010).make_16bit().require_expand()
+    r10b = GeneralPurposeRegister(0b010).make_8bit().require_expand().require_rex()
+
+    r11  = GeneralPurposeRegister(0b011).make_64bit().require_expand()
+    r11d = GeneralPurposeRegister(0b011).make_32bit().require_expand()
+    r11w = GeneralPurposeRegister(0b011).make_16bit().require_expand()
+    r11b = GeneralPurposeRegister(0b011).make_8bit().require_expand().require_rex()
+
+    r12  = GeneralPurposeRegister(0b100).make_64bit().require_expand()
+    r12d = GeneralPurposeRegister(0b100).make_32bit().require_expand()
+    r12w = GeneralPurposeRegister(0b100).make_16bit().require_expand()
+    r12b = GeneralPurposeRegister(0b100).make_8bit().require_expand().require_rex()
+
+    r13  = GeneralPurposeRegister(0b101).make_64bit().require_expand()
+    r13d = GeneralPurposeRegister(0b101).make_32bit().require_expand()
+    r13w = GeneralPurposeRegister(0b101).make_16bit().require_expand()
+    r13b = GeneralPurposeRegister(0b101).make_8bit().require_expand().require_rex()
+
+    r14  = GeneralPurposeRegister(0b110).make_64bit().require_expand()
+    r14d = GeneralPurposeRegister(0b110).make_32bit().require_expand()
+    r14w = GeneralPurposeRegister(0b110).make_16bit().require_expand()
+    r14b = GeneralPurposeRegister(0b110).make_8bit().require_expand().require_rex()
+
+    r15  = GeneralPurposeRegister(0b111).make_64bit().require_expand()
+    r15d = GeneralPurposeRegister(0b111).make_32bit().require_expand()
+    r15w = GeneralPurposeRegister(0b111).make_16bit().require_expand()
+    r15b = GeneralPurposeRegister(0b111).make_8bit().require_expand().require_rex()

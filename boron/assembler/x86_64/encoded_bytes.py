@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Literal
+from enum import Enum
 
 
 class EncodedByte(ABC):
@@ -96,14 +97,13 @@ class Prefix_Byte(EncodedByte):
 opcode_size_prefix = Prefix_Byte(bytes([0x66]))
 opcode_addr_prefix = Prefix_Byte(bytes([0x67]))
 
-SEG_PREFIX = {
-    "es": Prefix_Byte(bytes([0x26])),
-    "cs": Prefix_Byte(bytes([0x2E])),
-    "ss": Prefix_Byte(bytes([0x36])),
-    "ds": Prefix_Byte(bytes([0x3E])),
-    "fs": Prefix_Byte(bytes([0x64])),
-    "gs": Prefix_Byte(bytes([0x65])),
-}
+class SEG_PREFIX(Enum):
+    es = Prefix_Byte(bytes([0x26]))
+    cs = Prefix_Byte(bytes([0x2E]))
+    ss = Prefix_Byte(bytes([0x36]))
+    ds = Prefix_Byte(bytes([0x3E]))
+    fs = Prefix_Byte(bytes([0x64]))
+    gs = Prefix_Byte(bytes([0x65]))
 
 LOCK_PREFIX = Prefix_Byte(bytes([0xF0]))
 REP_PREFIX = Prefix_Byte(bytes([0xF3]))

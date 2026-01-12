@@ -64,7 +64,7 @@ class R_R_Innstruction(Instruction):
         if self.reg1.requires_mandatory or self.reg2.requires_mandatory:
             encoded.append(encoded_bytes.opcode_size_prefix)
         if self.reg1.requires_rex or self.reg2.requires_rex:
-            if self.reg1.is_rex_incompatible or self.reg2.is_rex_incompatible:
+            if self.reg1.is_rex_incompatible() or self.reg2.is_rex_incompatible():
                 raise ValueError("Cant use REX prefix with registers incompatible with REX")
             encoded.append(rex)
 
@@ -240,6 +240,13 @@ class MOV_Instruction:
         if imm.size == 1:
             return RM_IMM_Instruction(rm, imm, Opcode([0xC6], 0), is64)
         return RM_IMM_Instruction(rm, imm, Opcode([0xC7], 0), is64)
+    @staticmethod
+    def R_R(dst: operands.GPRegister, src: operands.GPRegister) -> R_R_Innstruction:
+        if dst.size != src.size:
+            raise ValueError("Register sizes must match")
+        if dst.is_8bit():
+            return R_R_Innstruction(dst, src, Opcode([0x8A]))
+        return R_R_Innstruction(dst, src, Opcode([0x8B]))
 
 class ADD_Instruction:
     @staticmethod
@@ -336,8 +343,8 @@ class SHR_Instruction:
         return R_IMM_Instruction(reg,imm,Opcode([0xC1],5))
     
     @staticmethod
-    def R_R(reg:operands.GPRegister,CL:operands.GPRegister) -> R_INSTRUCTION:
-        if CL != registers.GPRegisters["cl"]:
+    def R_R(reg:operands.GPRegister,CL:operands.GPRegister=registers.GPRegisters.cl) -> R_INSTRUCTION:
+        if CL != registers.GPRegisters.cl:
             raise ValueError("You can enter CL register only! (If you are curious search for documents)")
         if reg.is_8bit():
             return R_INSTRUCTION(reg,Opcode([0xD2],5))

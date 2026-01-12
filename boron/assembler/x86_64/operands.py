@@ -28,15 +28,15 @@ class RegMemBase:
         self.SIB :SIB_Byte|None= None
         self.requires_rex = False
         self.requires_mandatory = False
-        self.segment_override   = None
+        self.segment_override   : EncodedByte |None = None
         self.size : Literal[1, 2, 4, 8] = 1
 
     def set_size(self,size: Literal[1, 2, 4, 8]):
         self.size = size
         return self
 
-    def add_segment_override(self,SReg:Literal["es","cs","ss","ds","fs","gs"]):
-        self.segment_override   = SEG_PREFIX[SReg]
+    def add_segment_override(self,SReg:SEG_PREFIX):
+        self.segment_override   = SReg.value
         return self
 
 class Immediate:
