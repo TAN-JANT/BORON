@@ -2,7 +2,6 @@ from __future__ import annotations
 from typing import Literal
 from dataclasses import dataclass
 
-
 @dataclass(frozen=True)
 class GeneralPurposeRegister:
     code : int
@@ -100,27 +99,27 @@ class GeneralPurposeRegister:
     def is_expanded(self): return self.requires_expand
     def get_code(self): return self.code
 
-
-@dataclass
-class VectorRegister:
-    pass
-
-@dataclass
-class FPURegister:
-    pass
-
 @dataclass
 class SegmentRegister:
     def __init__(self,code:int):
         self.code = code
+    def get_code(self): return self.code
 
-class SegmentRegisters :
-    es = SegmentRegister(0)
-    cs = SegmentRegister(1)
-    ss = SegmentRegister(2)
-    ds = SegmentRegister(3)
-    fs = SegmentRegister(4)
-    gs = SegmentRegister(5)
+class SegmentRegisters:
+    es      = SegmentRegister(0)
+    cs      = SegmentRegister(1)
+    ss      = SegmentRegister(2)
+    ds      = SegmentRegister(3)
+    fs      = SegmentRegister(4)
+    gs      = SegmentRegister(5)
+    list = [
+        es,
+        cs,
+        ss,
+        ds,
+        fs,
+        gs,
+    ]
 
 class GPRegisters :
     # --- 8-bit ---
@@ -210,3 +209,75 @@ class GPRegisters :
     r15d = GeneralPurposeRegister(0b111).make_32bit().require_expand()
     r15w = GeneralPurposeRegister(0b111).make_16bit().require_expand()
     r15b = GeneralPurposeRegister(0b111).make_8bit().require_expand().require_rex()
+
+    list = [
+        al,
+        cl,
+        dl,
+        bl,
+        ah,
+        ch,
+        dh,
+        bh,
+        spl,
+        bpl,
+        sil,
+        dil,
+        ax,
+        cx,
+        dx,
+        bx,
+        sp,
+        bp,
+        si,
+        di,
+        eax,
+        ecx,
+        edx,
+        ebx,
+        esp,
+        ebp,
+        esi,
+        edi,
+        rax,
+        rcx,
+        rdx,
+        rbx,
+        rsp,
+        rbp,
+        rsi,
+        rdi,
+        r8,
+        r8d,
+        r8w,
+        r8b,
+        r9,
+        r9d,
+        r9w,
+        r9b,
+        r10,
+        r10d,
+        r10w,
+        r10b,
+        r11,
+        r11d,
+        r11w,
+        r11b,
+        r12,
+        r12d,
+        r12w,
+        r12b,
+        r13,
+        r13d,
+        r13w,
+        r13b,
+        r14,
+        r14d,
+        r14w,
+        r14b,
+        r15,
+        r15d,
+        r15w,
+        r15b,
+    ]
+

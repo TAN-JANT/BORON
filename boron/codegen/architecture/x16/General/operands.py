@@ -1,8 +1,10 @@
 from __future__ import annotations
 from typing import Literal
 from .registers import GeneralPurposeRegister as GPRegister
-from .encoded_bytes import EncodedByte, IMM_Byte,SIB_Byte,SEG_PREFIX,SYMBOL_Byte
-
+from .registers import SegmentRegister as SRegister
+from .registers import GPRegisters
+from warnings import warn
+from .encoded_bytes import EncodedByte,SIB_Byte,SEG_PREFIX,IMM_Byte,SYMBOL_Byte
 
 def fits_int(value: int | None, bits: int, signed: bool = True) -> bool:
     if value is None:
@@ -16,28 +18,6 @@ def fits_int(value: int | None, bits: int, signed: bool = True) -> bool:
         max_val = (1 << bits) - 1
 
     return min_val <= value <= max_val
-
-
-class RegMemBase:
-    def __init__(self):
-        self.mod: int = 0b00
-        self.code: int = 0b00
-        self.immediate: EncodedByte | None = None
-        self.X = 0
-        self.B = 0
-        self.SIB :SIB_Byte|None= None
-        self.requires_rex = False
-        self.requires_mandatory = False
-        self.segment_override   : EncodedByte |None = None
-        self.size : Literal[1, 2, 4, 8] = 1
-
-    def set_size(self,size: Literal[1, 2, 4, 8]):
-        self.size = size
-        return self
-
-    def add_segment_override(self,SReg:SEG_PREFIX):
-        self.segment_override   = SReg.value
-        return self
 
 class Immediate:
     def __init__(self, value: int, size: Literal[1, 2, 4, 8], signed: bool = False):
@@ -56,6 +36,24 @@ class SYMBOL(Immediate):
     def emit(self) -> SYMBOL_Byte:
         return SYMBOL_Byte(self.name,self.size)
 
+class RegMemBase:
+    def __init__(self):
+        self.mod: int = 0b00
+        self.code: int = 0b00
+        self.immediate: EncodedByte | None = None
+        self.SIB :SIB_Byte|None= None
+        self.requires_mandatory = False
+        self.segment_override   = None
+        self.size : Literal[1, 2, 4] = 1
+
+    def set_size(self,size: Literal[1, 2, 4]):
+        self.size = size
+        return self
+
+    def add_segment_override(self,SReg:SEG_PREFIX):
+        self.segment_override   = SReg.value
+        return self
+
 class SIB(RegMemBase):
     def __init__(self):
         super().__init__()
@@ -65,6 +63,7 @@ class SIB(RegMemBase):
         self.offset: int | None = None
         self.__base_code: int | None = None
         self.__index_code: int | None = None
+        self.requires_mandatory = True
         self.code = 0b100
 
     # [disp32]
@@ -77,8 +76,6 @@ class SIB(RegMemBase):
         self.scale = 0b00
         self.offset = 0 if offset is None else offset.value
         self.mod = 0b00
-        self.X = 0
-        self.B = 0
         self.immediate = IMM_Byte(self.offset, 4)
         self.SIB = SIB_Byte(self.__base_code,self.scale,self.__index_code)
         return self
@@ -90,8 +87,8 @@ class SIB(RegMemBase):
         offset: Immediate | None,
         scale: Literal[0b00, 0b01, 0b10, 0b11] = 0b00,
     ):
-        if not (index.is_32bit() or index.is_64bit()):
-            raise ValueError("Index register must be 32 bit or 64 bit")
+        if not index.is_32bit():
+            raise ValueError("Index register must be 32 bit")
 
         if index.get_code() == 0b100:
             return self.just_offset(offset)
@@ -104,8 +101,6 @@ class SIB(RegMemBase):
 
         self.__base_code = 0b101
         self.__index_code = index.get_code()
-        self.X = index.is_expanded()
-        self.B = 0
         self.scale = scale
         self.offset = offset.value if offset else 0
 
@@ -131,17 +126,14 @@ class SIB(RegMemBase):
 
     # [base + disp]
     def no_index(self, base: GPRegister, offset: Immediate | None):
-        if not (base.is_32bit() or base.is_64bit()):
-            raise ValueError("Base register must be 32 bit or 64 bit")
+        if not base.is_32bit():
+            raise ValueError("Base register must be 32 bit")
         self.base = base
         self.__base_code = base.get_code()
         self.__index_code = 0b100
-        self.B = base.is_expanded()
-        self.X = 0
         self.scale = 0b00
         self.offset = offset.value if offset else 0
-        if self.base.is_32bit():
-            self.requires_mandatory = True
+
 
         if offset is None or offset.value == 0:
             self.immediate = None
@@ -164,19 +156,15 @@ class SIB(RegMemBase):
         index: GPRegister,
         scale: Literal[0b00, 0b01, 0b10, 0b11] = 0b00,
     ):
-        if not (index.is_32bit() or index.is_64bit()):
-            raise ValueError("Index register must be 32 bit or 64 bit")
-        if not (base.is_32bit() or base.is_64bit()):
-            raise ValueError("Base register must be 32 bit or 64 bit")
+        if not index.is_32bit():
+            raise ValueError("Index register must be 32 bit")
+        if not base.is_32bit():
+            raise ValueError("Base register must be 32 bit")
         if not base.size == index.size:
             raise ValueError("Base and Index register sizes must match")
         
-        if index.get_code() == 0b100 and not index.is_expanded():
+        if index.get_code() == 0b100:
             raise ValueError("Index register cannot be stack pointer")
-
-        if index.is_32bit():
-            self.requires_mandatory = True
-
 
         self.base = base
         self.index = index
@@ -185,8 +173,6 @@ class SIB(RegMemBase):
 
         self.__base_code = base.get_code()
         self.__index_code = index.get_code()
-        self.B = base.is_expanded()
-        self.X = index.is_expanded()
 
         self.mod = 0b00 if self.__base_code != 0b101 else 0b01
         self.SIB = SIB_Byte(self.__base_code,self.scale,self.__index_code)
@@ -200,21 +186,19 @@ class SIB(RegMemBase):
         offset: Immediate | None,
         scale: Literal[0b00, 0b01, 0b10, 0b11] = 0b00,
     ):
-        if not (index.is_32bit() or index.is_64bit()):
-            raise ValueError("Index register must be 32 bit or 64 bit")
-        if not (base.is_32bit() or base.is_64bit()):
-            raise ValueError("Base register must be 32 bit or 64 bit")
+        if not (index.is_32bit()):
+            raise ValueError("Index register must be 32 bit")
+        if not (base.is_32bit()):
+            raise ValueError("Base register must be 32 bit")
         if not base.size == index.size:
             raise ValueError("Base and Index register sizes must match")
 
-        if index.get_code() == 0b100 and not index.is_expanded():
+        if index.get_code() == 0b100:
             raise ValueError("Index register cannot be stack pointer")
 
         if offset and offset.size > 4:
             raise ValueError("Offset value must fit in 32 bit")
 
-        if index.is_32bit():
-            self.requires_mandatory = True
         self.base = base
         self.index = index
         self.scale = scale
@@ -222,8 +206,6 @@ class SIB(RegMemBase):
 
         self.__base_code = base.get_code()
         self.__index_code = index.get_code()
-        self.B = base.is_expanded()
-        self.X = index.is_expanded()
 
         if offset is None or offset.value == 0:
             self.immediate = None
@@ -242,7 +224,7 @@ class Relative(RegMemBase):
         super().__init__()
         if offset.size > 4:
             raise ValueError("Relative offset must fit 32 bit")
-
+        self.requires_mandatory = True
         self.mod = 0b00
         self.code = 0b101
         self.immediate = IMM_Byte(offset.value, 4)
@@ -250,44 +232,85 @@ class Relative(RegMemBase):
 class RegMem(RegMemBase):
     def __init__(self):
         super().__init__()
-        self.code = 0b00
+        self.mod  = 0b00
+        self.code = 0b000
 
     def make_SIB(self) -> SIB:
         return SIB()
 
-    def make_REL(self, offset: Immediate) -> Relative:
+    def make_REL(self,offset:Immediate) -> Relative:
         return Relative(offset)
 
-    def no_offset(self, reg: GPRegister):
-        if not (reg.is_32bit() or reg.is_64bit()):
-            raise ValueError("Register must be 32 bit or 64 bit")
-        if reg.is_32bit():
-            self.requires_mandatory = True
-        self.B = reg.is_expanded()
-        if reg.get_code() == 0b100:
-            raise ValueError("Stack pointer cant be used as R/M register")
-        if reg.get_code() == 0b101:
-            self.code = 0b101
-            self.mod = 0b01
+    def just_offset(self,offset:Immediate):
+        if offset.size > 2 :
+            raise ValueError("Offset value must be 2 bytes or less!")
+        if offset.signed :
+            warn("This is not relative addressing using signed offset may cause some unexpected behaivour!")
+
+        self.code = 0b110
+        self.mod  = 0b00
+        offset.size = 2
+        self.immediate = offset.emit()
         return self
 
-    def with_offset(self, reg: GPRegister, offset: Immediate):
-        if not (reg.is_32bit() or reg.is_64bit()):
-            raise ValueError("Register must be 32 bit or 64 bit")
-        if reg.is_32bit():
-            self.requires_mandatory = True
-        self.B = reg.is_expanded()
-        if reg.get_code() == 0b100:
-            raise ValueError("Stack pointer cant be used as R/M register")
+    def no_offset(self,reg1:GPRegister,reg2:GPRegister|None):
+        if reg2 is None:
+            if reg1 == GPRegisters.bp:
+                self.mod = 0b01
+                self.immediate = IMM_Byte(0,1)
+                self.code = 0b110
+                return self
 
-        self.code = reg.get_code()
-        if offset.size <= 1:
-            self.immediate = IMM_Byte(offset.value, 1)
-            self.mod = 0b01
+            if reg1 not in [GPRegisters.bx,GPRegisters.bp,GPRegisters.si,GPRegisters.di]:
+                raise ValueError("Illegal register use")
+
+            self.mod  = 0b00
+            self.code = {
+                GPRegisters.bx : 0b111,
+                GPRegisters.di : 0b101,
+                GPRegisters.si : 0b100,
+            }[reg1]
+
             return self
-        if offset.size <= 4:
-            self.immediate = IMM_Byte(offset.value, 4)
-            self.mod = 0b10
+        match {reg1,reg2}:
+            case s if s == {GPRegisters.bx, GPRegisters.si}:
+                self.code = 0b000
+            case s if s == {GPRegisters.bx, GPRegisters.di}:
+                self.code = 0b001
+            case s if s == {GPRegisters.bp, GPRegisters.si}:
+                self.code = 0b010
+            case s if s == {GPRegisters.bp, GPRegisters.di}:
+                self.code = 0b011
+            case _:
+                raise ValueError("Illegal register pair")
+        self.mod = 0b00
+        return self
+
+    def with_offset(self,reg1:GPRegister,reg2:GPRegister|None,imm:Immediate):
+        if imm.size > 2:
+            raise ValueError("...")
+        self.mod = 0b01 if imm.size == 1 else 0b10
+        if reg2 is None:
+            if reg1 not in [GPRegisters.bx,GPRegisters.bp,GPRegisters.si,GPRegisters.di]:
+                raise ValueError("Illegal register use")
+
+            self.code = {
+                GPRegisters.bx: 0b111,
+                GPRegisters.di: 0b101,
+                GPRegisters.si: 0b100,
+            }[reg1]
+
             return self
-        else:
-            raise ValueError("Offset value must fit in 32 bit")
+        match {reg1,reg2}:
+            case s if s == {GPRegisters.bx, GPRegisters.si}:
+                self.code = 0b000
+            case s if s == {GPRegisters.bx, GPRegisters.di}:
+                self.code = 0b001
+            case s if s == {GPRegisters.bp, GPRegisters.si}:
+                self.code = 0b010
+            case s if s == {GPRegisters.bp, GPRegisters.di}:
+                self.code = 0b011
+            case _:
+                raise ValueError("Illegal register pair")
+
+        return self

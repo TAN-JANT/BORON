@@ -1,12 +1,13 @@
 from . import operands,encoded_bytes,registers
-from typing import Literal
+from typing import Literal, Sequence
+
 class Opcode:
     def __init__(self, bytes: list[int], modrm_extension: int | None = None):
         self.bytes = bytes
         self.modrm_extension = modrm_extension
 
 class Instruction:
-    def encode(self) -> bytes:
+    def emit(self) -> Sequence[encoded_bytes.EncodedByte]:
         raise NotImplementedError
 
 
@@ -21,15 +22,12 @@ class R_RM_Instruction(Instruction):
         modrm = encoded_bytes.MODRM_Byte(self.rm.mod,self.reg.get_code(),self.rm.code)
         sib = self.rm.SIB 
         imm = self.rm.immediate
-        rex = encoded_bytes.REX_Byte(1 if self.reg.requires_rex_w_bit else 0,self.reg.is_expanded(),self.rm.X,self.rm.B)
         if self.rm.segment_override is not None:
             encoded.append(self.rm.segment_override)
-        if self.reg.is_16bit():
-            encoded.append(encoded_bytes.opcode_size_prefix)
+        if self.reg.is_32bit():
+            encoded.append(encoded_bytes.opcode_size_prefix)#16 -> 32
         if self.rm.requires_mandatory:
             encoded.append(encoded_bytes.opcode_addr_prefix)
-        if self.reg.requires_rex or self.rm.requires_rex:
-            encoded.append(rex)
 
         encoded.append(encoded_bytes.Opcode_Byte(self.opcode.bytes))
         encoded.append(modrm)
@@ -40,7 +38,7 @@ class R_RM_Instruction(Instruction):
 
         return encoded
 
-class R_R_Innstruction(Instruction):
+class R_R_Instruction(Instruction):
 
     def __init__(
         self, reg1: operands.GPRegister, reg2: operands.GPRegister, opcode: Opcode
@@ -55,24 +53,15 @@ class R_R_Innstruction(Instruction):
     def emit(self):
         encoded: list[encoded_bytes.EncodedByte] = []
         modrm = encoded_bytes.MODRM_Byte(0b11, self.reg1.get_code(), self.reg2.get_code())
-        rex = encoded_bytes.REX_Byte(
-            1 if self.reg1.requires_rex_w_bit or self.reg2.requires_rex_w_bit else 0,
-            self.reg1.is_expanded(),
-            0,
-            self.reg2.is_expanded(),
-        )
+
         if self.reg1.requires_mandatory or self.reg2.requires_mandatory:
             encoded.append(encoded_bytes.opcode_size_prefix)
-        if self.reg1.requires_rex or self.reg2.requires_rex:
-            if self.reg1.is_rex_incompatible() or self.reg2.is_rex_incompatible():
-                raise ValueError("Cant use REX prefix with registers incompatible with REX")
-            encoded.append(rex)
 
         encoded.append(encoded_bytes.Opcode_Byte(self.opcode.bytes))
         encoded.append(modrm)
 
         return encoded
-
+    
 class R_IMM_Instruction(Instruction):
     def __init__(self, reg:operands.GPRegister , imm:operands.Immediate, opcode: Opcode):
         self.reg = reg
@@ -81,14 +70,10 @@ class R_IMM_Instruction(Instruction):
 
     def emit(self):
         encoded :list[encoded_bytes.EncodedByte] = []
-        rex = encoded_bytes.REX_Byte(1 if self.reg.requires_rex_w_bit else 0,self.reg.is_expanded(),0,0)
 
         if self.reg.requires_mandatory:
             encoded.append(encoded_bytes.opcode_size_prefix)
  
-        if self.reg.requires_rex:
-            encoded.append(rex)
-
         encoded.append(encoded_bytes.Opcode_Byte(self.opcode.bytes))
         if self.opcode.modrm_extension is not None:
             encoded.append(encoded_bytes.MODRM_Byte(0b11,self.opcode.modrm_extension,self.reg.get_code()))
@@ -96,12 +81,14 @@ class R_IMM_Instruction(Instruction):
 
         return encoded
 
+
 class RM_IMM_Instruction(Instruction):
-    def __init__(self, rm:operands.RegMemBase , imm:operands.Immediate, opcode: Opcode , rexW:bool=False):
+    def __init__(self, rm:operands.RegMemBase , imm:operands.Immediate, opcode: Opcode):
         self.rm = rm
         self.imm = imm
         self.opcode = opcode
-        self.W = rexW
+        
+        
         if ( imm.size > 4):
             raise ValueError("Immediate size must be 4 bytes or less")
 
@@ -110,18 +97,22 @@ class RM_IMM_Instruction(Instruction):
         modrm = encoded_bytes.MODRM_Byte(self.rm.mod,self.opcode.modrm_extension if self.opcode.modrm_extension is not None else 0,self.rm.code)
         sib = self.rm.SIB
         imm = self.imm.emit()
-        rex = encoded_bytes.REX_Byte(1 if self.W else 0,0,self.rm.X,self.rm.B)
+        rm_imm = self.rm.immediate
         if self.rm.segment_override is not None:
             encoded.append(self.rm.segment_override)
+        if self.rm.size == 4:
+            encoded.append(encoded_bytes.opcode_size_prefix) # 16 -> 32
         if self.rm.requires_mandatory:
             encoded.append(encoded_bytes.opcode_addr_prefix)
-        if self.rm.requires_rex:
-            encoded.append(rex)
+
 
         encoded.append(encoded_bytes.Opcode_Byte(self.opcode.bytes))
         encoded.append(modrm)
+        
         if sib is not None:
             encoded.append(sib)
+        if rm_imm is not None:
+            encoded.append(rm_imm)
         encoded.append(imm)
 
         return encoded
@@ -133,11 +124,8 @@ class R_INSTRUCTION(Instruction):
 
     def emit(self):
         encoded :list[encoded_bytes.EncodedByte] = []
-        rex = encoded_bytes.REX_Byte(1 if self.reg.requires_rex_w_bit else 0,self.reg.is_expanded(),0,0)
         if self.reg.requires_mandatory:
             encoded.append(encoded_bytes.opcode_size_prefix)
-        if self.reg.requires_rex:
-            encoded.append(rex)
 
         encoded.append(encoded_bytes.Opcode_Byte(self.opcode.bytes))
         if self.opcode.modrm_extension is not None:
@@ -154,13 +142,12 @@ class RM_INSTRUCTION(Instruction):
         encoded :list[encoded_bytes.EncodedByte] = []
         modrm = encoded_bytes.MODRM_Byte(self.rm.mod,self.opcode.modrm_extension if self.opcode.modrm_extension is not None else 0,self.rm.code)
         sib = self.rm.SIB
-        rex = encoded_bytes.REX_Byte(0,0,self.rm.X,self.rm.B)
         if self.rm.segment_override is not None:
             encoded.append(self.rm.segment_override)
+        if self.rm.size == 4:
+            encoded.append(encoded_bytes.opcode_size_prefix) # 16 -> 32
         if self.rm.requires_mandatory:
             encoded.append(encoded_bytes.opcode_addr_prefix)
-        if self.rm.requires_rex:
-            encoded.append(rex)
 
         encoded.append(encoded_bytes.Opcode_Byte(self.opcode.bytes))
         encoded.append(modrm)
@@ -176,6 +163,8 @@ class I_INSTRUCTION(Instruction):
 
     def emit(self):
         encoded: list[encoded_bytes.EncodedByte] = []
+        if self.imm.size == 4:
+            encoded.append(encoded_bytes.opcode_size_prefix) # 16 -> 32
 
         encoded.append(encoded_bytes.Opcode_Byte(self.opcode.bytes))
         encoded.append(self.imm.emit())
@@ -208,29 +197,23 @@ class DEC_Instruction:
             return RM_INSTRUCTION(rm,Opcode([0xFE],0b001))
         return RM_INSTRUCTION(rm,Opcode([0xFF],0b001))
 
-class SyscallInstruction(Instruction):
-    def emit(self):
-        return [encoded_bytes.Opcode_Byte([0x0F,0x05])]
-
 class MOV_Instruction:
     @staticmethod
     def R_RM(reg:operands.GPRegister , rm:operands.RegMemBase)->R_RM_Instruction:
         # r -> rm
         if reg.is_8bit():
-            return R_RM_Instruction(reg,rm,Opcode([0x88]))
-        return R_RM_Instruction(reg,rm,Opcode([0x89]))
+            return R_RM_Instruction(reg,rm,Opcode([0x8A]))
+        return R_RM_Instruction(reg,rm,Opcode([0x8B]))
 
     @staticmethod
     def RM_R(rm:operands.RegMemBase , reg:operands.GPRegister)->R_RM_Instruction:
         # rm -> r
         if reg.is_8bit():
-            return R_RM_Instruction(reg,rm,Opcode([0x8A]))
-        return R_RM_Instruction(reg,rm,Opcode([0x8B]))
+            return R_RM_Instruction(reg,rm,Opcode([0x88]))
+        return R_RM_Instruction(reg,rm,Opcode([0x89]))
 
     @staticmethod
     def R_IMM(reg:operands.GPRegister , imm:operands.Immediate)->R_IMM_Instruction:
-        if reg.is_64bit() and imm.size ==4:
-            return R_IMM_Instruction(reg,imm,Opcode([0xC7],0))
         if reg.is_8bit():
             return R_IMM_Instruction(reg,imm,Opcode([0xB0 + reg.get_code()]))
         return R_IMM_Instruction(reg,imm,Opcode([0xB8 + reg.get_code()]))
@@ -238,15 +221,15 @@ class MOV_Instruction:
     @staticmethod
     def RM_IMM(rm:operands.RegMemBase, imm:operands.Immediate, is64=False):
         if imm.size == 1:
-            return RM_IMM_Instruction(rm, imm, Opcode([0xC6], 0), is64)
-        return RM_IMM_Instruction(rm, imm, Opcode([0xC7], 0), is64)
+            return RM_IMM_Instruction(rm, imm, Opcode([0xC6], 0))
+        return RM_IMM_Instruction(rm, imm, Opcode([0xC7], 0))
     @staticmethod
-    def R_R(dst: operands.GPRegister, src: operands.GPRegister) -> R_R_Innstruction:
+    def R_R(dst: operands.GPRegister, src: operands.GPRegister) -> R_R_Instruction:
         if dst.size != src.size:
             raise ValueError("Register sizes must match")
         if dst.is_8bit():
-            return R_R_Innstruction(dst, src, Opcode([0x8A]))
-        return R_R_Innstruction(dst, src, Opcode([0x8B]))
+            return R_R_Instruction(dst, src, Opcode([0x8A]))
+        return R_R_Instruction(dst, src, Opcode([0x8B]))
 
 class ADD_Instruction:
     @staticmethod
@@ -254,16 +237,16 @@ class ADD_Instruction:
         if rm.size != reg.size:
             raise ValueError("Operand sizes must match")
         if reg.is_8bit():
-            return R_RM_Instruction(reg,rm,Opcode([0x00]))
-        return R_RM_Instruction(reg,rm,Opcode([0x01]))
+            return R_RM_Instruction(reg,rm,Opcode([0x02]))
+        return R_RM_Instruction(reg,rm,Opcode([0x03]))
 
     @staticmethod
     def RM_R(rm:operands.RegMemBase , reg:operands.GPRegister)->R_RM_Instruction:
         if rm.size != reg.size:
             raise ValueError("Operand sizes must match")
         if reg.is_8bit():
-            return R_RM_Instruction(reg,rm,Opcode([0x02]))
-        return R_RM_Instruction(reg,rm,Opcode([0x03]))
+            return R_RM_Instruction(reg,rm,Opcode([0x00]))
+        return R_RM_Instruction(reg,rm,Opcode([0x01]))
 
     @staticmethod
     def R_IMM(reg:operands.GPRegister , imm:operands.Immediate)->R_IMM_Instruction:
@@ -278,14 +261,22 @@ class ADD_Instruction:
         return R_IMM_Instruction(reg,imm,Opcode([0x81],0b000))
     
     @staticmethod
-    def RM_IMM(rm:operands.RegMemBase, imm:operands.Immediate, is64=False):
+    def RM_IMM(rm:operands.RegMemBase, imm:operands.Immediate):
         if imm.size == 1 and not rm.size ==1:
-            return RM_IMM_Instruction(rm, imm, Opcode([0x83], 0), is64)
+            return RM_IMM_Instruction(rm, imm, Opcode([0x83], 0))
         if imm.size != rm.size:
             raise ValueError("Operand sizes must match")
         if rm.size ==1:
-            return RM_IMM_Instruction(rm, imm, Opcode([0x80], 0), is64)
-        return RM_IMM_Instruction(rm, imm, Opcode([0x81], 0), is64)
+            return RM_IMM_Instruction(rm, imm, Opcode([0x80], 0))
+        return RM_IMM_Instruction(rm, imm, Opcode([0x81], 0))
+
+    @staticmethod
+    def R_R(dst: operands.GPRegister, src: operands.GPRegister) -> R_R_Instruction:
+        if dst.size != src.size:
+            raise ValueError("Register sizes must match")
+        if dst.is_8bit():
+            return R_R_Instruction(dst, src, Opcode([0x02]))
+        return R_R_Instruction(dst, src, Opcode([0x03]))
 
 class LEA_Instruction(R_RM_Instruction):
     def __init__(self, reg:operands.GPRegister , rm:operands.RegMemBase):
@@ -298,8 +289,8 @@ class RET_Instruction(Instruction):
 class PUSH_Instruction:
     @staticmethod
     def R(reg:operands.GPRegister )->R_INSTRUCTION:
-        if not(reg.is_16bit() or reg.is_64bit()):
-            raise ValueError("You can push only 16 or 64 bit registers!")
+        if not(reg.is_16bit()):
+            raise ValueError("You can push only 16 bit registers!")
         return R_INSTRUCTION(reg,Opcode([0x50+reg.code]))
     @staticmethod
     def I(imm:operands.Immediate)->I_INSTRUCTION:
@@ -317,8 +308,8 @@ class PUSH_Instruction:
 class POP_Instruction:
     @staticmethod
     def R(reg:operands.GPRegister )->R_INSTRUCTION:
-        if not(reg.is_16bit() or reg.is_64bit()):
-            raise ValueError("You can pop with only 16 or 64 bit registers!")
+        if not(reg.is_16bit()):
+            raise ValueError("You can pop with only 16 bit registers!")
         return R_INSTRUCTION(reg,Opcode([0x58+reg.code]))
 
     @staticmethod
