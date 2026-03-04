@@ -1,10 +1,8 @@
-from boron.codegen.architecture import x64
-from .section import Section
-from enum import Enum, auto
 
-class ARCH(Enum):
-	x64 = auto()
-	x86 = auto()
+from .section import Section
+from boron import ARCH
+
+
 
 class Builder:
     def __init__(self,arch:ARCH=ARCH.x64,is64:bool=True,lsb=True):

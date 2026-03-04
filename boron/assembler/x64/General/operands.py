@@ -3,7 +3,7 @@ from typing import Literal
 from .registers import GeneralPurposeRegister as GPRegister
 from .registers import SegmentRegister as SRegister
 from .encoded_bytes import EncodedByte, IMM_Byte,SIB_Byte,SEG_PREFIX,SYMBOL_Byte
-from boron.codegen.architecture.instructions import baseinstr
+from boron.assembler.instructions import baseinstr
 
 def fits_int(value: int | None, bits: int, signed: bool = True) -> bool:
     if value is None:

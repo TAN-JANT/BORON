@@ -1,5 +1,5 @@
-from boron.codegen.architecture.instructions import baseinstr
-from boron.codegen.architecture.encoded_bytes import SYMBOL_Byte
+from boron.assembler.instructions import baseinstr
+from boron.assembler.encoded_bytes import SYMBOL_Byte
 from enum import Enum, Flag, auto
 from typing import Sequence
 from dataclasses import dataclass
@@ -106,7 +106,7 @@ class Section:
         parts = instr.emit()
         if not isinstance(parts, (Sequence)):
             parts = [parts]
-        
+
 
         for part in parts:
             if isinstance(part, SYMBOL_Byte):

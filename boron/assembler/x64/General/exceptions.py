@@ -1,4 +1,4 @@
-from boron.codegen.architecture.exceptions import AssemblerError
+from boron.assembler.exceptions import AssemblerError
 
 class OperandSizeMismatchError(AssemblerError):
     def __init__(self, mnemonic, *operands):

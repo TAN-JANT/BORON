@@ -1,6 +1,6 @@
 from __future__ import annotations
 from . import operands, encoded_bytes, registers, exceptions
-from boron.codegen.architecture.instructions import baseinstr
+from boron.assembler.instructions import baseinstr
 from typing import Sequence, overload, TypeVar
 
 
@@ -492,6 +492,15 @@ class I_INSTRUCTION(INSTRUCTION):
         encoded.append(encoded_bytes.Opcode_Byte(self.opcode.bytes))
         encoded.append(self.imm.emit())
         return encoded
+
+    def try_shrink(self):
+        if not isinstance(self.imm, operands.SYMBOL):
+            return False
+
+        self.imm.size = 1
+        self.opcode = Opcode(bytearray([0xEB]))  # short jmp
+        return True
+
 
 
 class SREG_R_INSTRUCTION(INSTRUCTION):
