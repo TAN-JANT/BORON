@@ -16,6 +16,8 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
+[tool.pytest.ini_options]
+testpaths = ["test"]
 
 [tool.setuptools]
 packages = ["boron"]
