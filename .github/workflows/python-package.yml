@@ -39,7 +39,7 @@ jobs:
   publish:
     name: 🚀 Publish to PyPI
     needs: test # Sadece testler başarılı olursa çalışır
-    if: startsWith(github.ref, 'refs/tags/') 
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
     permissions:
