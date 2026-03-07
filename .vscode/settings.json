@@ -1,7 +1,0 @@
-{
-    "python.testing.pytestArgs": [
-        "test.assemble"
-    ],
-    "python.testing.unittestEnabled": true,
-    "python.testing.pytestEnabled": true
-}
