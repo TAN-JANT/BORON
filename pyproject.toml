@@ -19,5 +19,5 @@ classifiers = [
 [tool.pytest.ini_options]
 testpaths = ["test"]
 
-[tool.setuptools]
+[tool.setuptools.packages.find]
 packages = ["boron*"]
