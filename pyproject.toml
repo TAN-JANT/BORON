@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "boron-assembler" # pip install boron-assembler
-version = "0.1.0"
+version = "0.1.1"
 description = "Boron is a hobby project that implements an x86-64 assembler in Python."
 readme = "README.md"
 requires-python = ">=3.11"
