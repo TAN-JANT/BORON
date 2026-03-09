@@ -9,7 +9,7 @@ class Builder:
         self.is64 = is64
         self.lsb = lsb
         self.arch = arch
-        self.sections = {}
+        self.sections :dict[str,Section]= {}
 
     def add_section(self, section: Section):
         """

@@ -118,11 +118,11 @@ class SECTION:
         self.symbols.append(sym)
         return sym
 
-    def add_symbol(self, name: str, size: int = 0, offset: int = 0):
+    def add_symbol(self, name: str, size: int = 0, offset: int = 0,defined: bool = True,binding: section.SymbolBinding = section.SymbolBinding.LOCAL):
         """
         Add a symbol without creating a label.
         """
-        sym = section.Symbol(name, offset=offset, size=size)
+        sym = section.Symbol(name, offset=offset, size=size, defined=defined, binding=binding)
         self.symbols.append(sym)
         return sym
 
@@ -186,7 +186,7 @@ class ASSEMBLER:
                 current_section.symbols.append(j)
             for _,j in i.content:
                 if isinstance(j, instructions.RawData):
-                    current_section.emit_data(len(j.data), j.data)
+                    current_section.insert_data(len(j.data), j.data)
                     continue
                 if isinstance(j, instructions.Alignment):
                     continue

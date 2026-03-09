@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "boron-assembler" # pip install boron-assembler
-version = "0.1.0"
+version = "0.1.1"
 description = "Boron is a hobby project that implements an x86-64 assembler in Python."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -16,8 +16,12 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
+[project.urls]
+Homepage = "https://github.com/TAN-JANT/BORON"
+
 [tool.pytest.ini_options]
 testpaths = ["test"]
 
-[tool.setuptools]
-packages = ["boron"]
+[tool.setuptools.packages.find]
+where = ["."]
+

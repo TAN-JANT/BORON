@@ -11,7 +11,7 @@ text = builder.add_section(
 
 
 a = text.add_label("_start", binding=SymbolBinding.GLOBAL)
-
+text.add_symbol("_random", size=0, offset=0, defined=False, binding=SymbolBinding.EXTERN) # testing the external symbol 
 # write syscall
 # rax = 1 (sys_write)
 text.add(x64.General.instructions.INSTRUCTIONS.MOV.R_IMM(

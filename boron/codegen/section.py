@@ -54,10 +54,12 @@ class Section:
 
         self.content :bytearray = bytearray()
         self.size           = 0
-        self.relocations    = []
-        self.symbols        = []
+        self.relocations: list[Relocation] = []
+        self.symbols: list[Symbol] = []
 
-    def add_relocation(self, offset: int, type: RelocationType, symbol: Symbol, addend: int = 0):
+    def add_relocation(
+        self, offset: int, type: RelocationType, symbol: Symbol, addend: int = 0
+    ):
         reloc = Relocation(offset, type, symbol, addend)
         self.relocations.append(reloc)
 
@@ -67,7 +69,10 @@ class Section:
         """
         self.size += size
 
-    def emit_data(self, size: int, *values):
+    def insert_data(self, size: int, *values):
+        """
+        Its for the raw data insertion like db dd dq  in assembly
+        """
         out = bytearray()
 
         for v in values:
@@ -93,10 +98,10 @@ class Section:
         self.content += out
         self.size += len(out)
 
-    def db(self,*vals): return self.emit_data(1,*vals)
-    def dw(self,*vals): return self.emit_data(2,*vals)
-    def dd(self,*vals): return self.emit_data(4,*vals)
-    def dq(self,*vals): return self.emit_data(8,*vals)
+    def db(self,*vals): return self.insert_data(1,*vals)
+    def dw(self,*vals): return self.insert_data(2,*vals)
+    def dd(self,*vals): return self.insert_data(4,*vals)
+    def dq(self,*vals): return self.insert_data(8,*vals)
 
     def add(self, instr: baseinstr):
         """
@@ -106,7 +111,6 @@ class Section:
         parts = instr.emit()
         if not isinstance(parts, (Sequence)):
             parts = [parts]
-
 
         for part in parts:
             if isinstance(part, SYMBOL_Byte):
@@ -125,11 +129,11 @@ class Section:
         self.symbols.append(sym)
         return sym
 
-    def add_symbol(self, name: str, size: int = 0,offset:int = 0):
+    def add_symbol(self, name: str, size: int = 0,offset:int = 0,defined: bool = True,binding: SymbolBinding = SymbolBinding.LOCAL):
         """
         Add a symbol without creating a label.
         """
-        sym = Symbol(name, offset=offset, size=size)
+        sym = Symbol(name, offset=offset, size=size, defined=defined, binding=binding)
         self.symbols.append(sym)
         return sym
 
