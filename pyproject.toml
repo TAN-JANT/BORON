@@ -20,4 +20,4 @@ classifiers = [
 testpaths = ["test"]
 
 [tool.setuptools.packages.find]
-packages = ["boron*"]
+where = ["."]
