@@ -1,7 +1,7 @@
 from __future__ import annotations
 from . import operands, encoded_bytes, registers, exceptions
 from boron.assembler.instructions import baseinstr
-from typing import Sequence, overload, TypeVar
+from typing import Sequence, overload, TypeVar,Optional
 
 
 def check_same_size(*op_sizes):
@@ -90,16 +90,27 @@ class PrefixHandler:
 
 
 class Opcode:
-    def __init__(self, bytes: bytearray, modrm_extension: int | None = None):
+    def __init__(
+        self,
+        bytes: bytearray,
+        modrm_extension: Optional[int] = None,
+        supports_lock: bool = False,
+        supports_rep: bool = False,
+        supports_repne: bool = False,
+        disable_rex_W: bool = False,
+        rex_disabled: bool = False,
+    ):
         self.bytes = bytes
         self.modrm_extension = modrm_extension
-
+        self.supports_lock = supports_lock
+        self.supports_rep = supports_rep
+        self.supports_repne = supports_repne
+        self.disable_rex_W = disable_rex_W
+        self.rex_disabled = rex_disabled
 
 class INSTRUCTION(baseinstr):
     legacy_prefix: encoded_bytes.EncodedByte | None = None
-    supports_lock = False
-    supports_rep = False
-    supports_repne = False
+    
 
     def __init__(self, mnemonic: str):
         self.mnemonic = mnemonic
@@ -330,7 +341,7 @@ class R_IMM_INSTRUCTION(INSTRUCTION):
     def emit(self):
         encoded: list[encoded_bytes.EncodedByte] = []
         rex = encoded_bytes.REX_Byte(
-            1 if self.reg.requires_rex_w_bit else 0, self.reg.is_expanded(), 0, 0
+            1 if self.reg.requires_rex_w_bit else 0, 0, 0, self.reg.is_expanded()
         )
 
         encoded.extend(
@@ -338,7 +349,7 @@ class R_IMM_INSTRUCTION(INSTRUCTION):
                 legacy_prefix=self.legacy_prefix,
                 operand_size=self.reg.requires_mandatory,
                 address_size=False,
-                rex=rex if self.reg.requires_rex else None,
+                rex=rex if self.reg.requires_rex  else None,
             )
         )
 
@@ -418,14 +429,14 @@ class R_INSTRUCTION(INSTRUCTION):
     def emit(self):
         encoded: list[encoded_bytes.EncodedByte] = []
         rex = encoded_bytes.REX_Byte(
-            1 if self.reg.requires_rex_w_bit else 0, self.reg.is_expanded(), 0, 0
+            1 if self.reg.requires_rex_w_bit and not self.opcode.disable_rex_W else 0, 0, 0, self.reg.is_expanded()
         )
         encoded.extend(
             PrefixHandler.emit(
                 legacy_prefix=self.legacy_prefix,
                 operand_size=self.reg.requires_mandatory,
                 address_size=False,
-                rex=rex if self.reg.requires_rex else None,
+                rex=rex if (self.reg.requires_expand or (self.reg.requires_rex_w_bit and not self.opcode.disable_rex_W )) and not self.opcode.rex_disabled else None,
             )
         )
         encoded.append(encoded_bytes.Opcode_Byte(self.opcode.bytes))
@@ -502,7 +513,6 @@ class I_INSTRUCTION(INSTRUCTION):
         return True
 
 
-
 class SREG_R_INSTRUCTION(INSTRUCTION):
     def __init__(
         self,
@@ -516,6 +526,7 @@ class SREG_R_INSTRUCTION(INSTRUCTION):
         self.reg = reg
         if self.reg.is_64bit():
             self.reg = registers.GeneralPurposeRegister(
+                self.reg.name,
                 self.reg.code,
                 size=4,
                 requires_expand=self.reg.requires_expand,
@@ -643,35 +654,13 @@ class MOV_INSTRUCTION:
 
 
 class ALU_FAMILY:
-    supports_lock = False
-    supports_rep = False
-    supports_repne = False
+
     T = TypeVar("T", bound=INSTRUCTION)
 
     def _require_opcode(self, opcode, mnemonic, *ops):
         if opcode is None:
             raise exceptions.IllegalInstrutcionError(mnemonic, *ops)
         return opcode
-
-    def _inherit_support(self, instruction: T) -> T:
-        instruction.supports_lock = (
-            self.supports_lock and instruction.has_memory_operand()
-        )
-        instruction.supports_rep = self.supports_rep
-        instruction.supports_repne = self.supports_repne
-        return instruction
-
-    def support_lock(self):
-        self.supports_lock = True
-        return self
-
-    def support_rep(self):
-        self.supports_rep = True
-        return self
-
-    def support_repne(self):
-        self.supports_repne = True
-        return self
 
 
 class Unary_ALU_INSTRUCTION(ALU_FAMILY):
@@ -691,13 +680,13 @@ class Unary_ALU_INSTRUCTION(ALU_FAMILY):
         opcode = self._require_opcode(
             (self.rm_8 if rm.size == 1 else self.rm), self.mnemonic, rm
         )
-        return self._inherit_support(RM_INSTRUCTION(self.mnemonic, rm, opcode))
+        return RM_INSTRUCTION(self.mnemonic, rm, opcode)
 
-    def R(self, r: operands.GPRegister, mnemonic: str) -> R_INSTRUCTION:
+    def R(self, r: operands.GPRegister) -> R_INSTRUCTION:
         opcode = self._require_opcode(
             (self.rm_8 if r.size == 1 else self.rm), self.mnemonic, r
         )
-        return self._inherit_support(R_INSTRUCTION(self.mnemonic, r, opcode))
+        return R_INSTRUCTION(self.mnemonic, r, opcode)
 
 
 class Binary_ALU_INSTRUCTION(ALU_FAMILY):
@@ -743,7 +732,7 @@ class Binary_ALU_INSTRUCTION(ALU_FAMILY):
         opcode = self._require_opcode(
             (self.r_rm_8 if rm.size == 1 else self.r_rm), self.mnemonic, rm
         )
-        return self._inherit_support(R_RM_INSTRUCTION(self.mnemonic, reg, rm, opcode))
+        return R_RM_INSTRUCTION(self.mnemonic, reg, rm, opcode)
 
     def RM_R(
         self, rm: operands.RegMemBase, reg: operands.GPRegister
@@ -753,7 +742,7 @@ class Binary_ALU_INSTRUCTION(ALU_FAMILY):
         opcode = self._require_opcode(
             (self.rm_r_8 if rm.size == 1 else self.rm_r), self.mnemonic, rm
         )
-        return self._inherit_support(R_RM_INSTRUCTION(self.mnemonic, reg, rm, opcode))
+        return R_RM_INSTRUCTION(self.mnemonic, reg, rm, opcode)
 
     def R_IMM(
         self, reg: operands.GPRegister, imm: operands.Immediate
@@ -763,52 +752,56 @@ class Binary_ALU_INSTRUCTION(ALU_FAMILY):
         if reg.is_8bit():
             if imm.size != reg.size:
                 raise exceptions.OperandSizeMismatchError(self.mnemonic, reg, imm)
-            return self._inherit_support(
-                R_IMM_INSTRUCTION(
+            return R_IMM_INSTRUCTION(
                     self.mnemonic,
                     reg,
                     imm,
                     self._require_opcode(self.r_imm8, self.mnemonic, reg, imm),
                 )
-            )
+            
         if imm.size == 1 and reg.size == 8:
-            return self._inherit_support(
-                R_IMM_INSTRUCTION(
+            return R_IMM_INSTRUCTION(
                     self.mnemonic,
                     reg,
                     imm,
                     self._require_opcode(self.r64_imm8, self.mnemonic, reg, imm),
                 )
-            )
+            
+        if imm.size == 4 and reg.size == 8:
+            return R_IMM_INSTRUCTION(
+                    self.mnemonic,
+                    reg,
+                    imm,
+                    self._require_opcode(self.r_imm, self.mnemonic, reg, imm),
+                )
+            
         if imm.size != reg.size:
             raise exceptions.OperandSizeMismatchError(self.mnemonic, reg, imm)
-        return self._inherit_support(
-            R_IMM_INSTRUCTION(
+        return R_IMM_INSTRUCTION(
                 self.mnemonic,
                 reg,
                 imm,
                 self._require_opcode(self.r_imm, self.mnemonic, reg, imm),
             )
-        )
+        
 
     def RM_IMM(self, rm: operands.RegMemBase, imm: operands.Immediate):
         if imm.size > 4:
             raise exceptions.InvalidImmediateError(self.mnemonic, imm)
         if imm.size == 1 and rm.size == 8:
-            return self._inherit_support(
-                RM_IMM_INSTRUCTION(
+            return RM_IMM_INSTRUCTION(
                     self.mnemonic,
                     rm,
                     imm,
                     self._require_opcode(self.rm64_imm8, self.mnemonic, rm, imm),
                 )
-            )
+            
         if imm.size != rm.size:
             raise exceptions.OperandSizeMismatchError(self.mnemonic, rm, imm)
         opcode = self._require_opcode(
             self.rm_imm8 if rm.size == 1 else self.rm_imm, self.mnemonic, rm, imm
         )
-        return self._inherit_support(RM_IMM_INSTRUCTION(self.mnemonic, rm, imm, opcode))
+        return RM_IMM_INSTRUCTION(self.mnemonic, rm, imm, opcode)
 
     def R_R(
         self, dst: operands.GPRegister, src: operands.GPRegister
@@ -818,7 +811,7 @@ class Binary_ALU_INSTRUCTION(ALU_FAMILY):
         opcode = self._require_opcode(
             self.r_r_8 if dst.is_8bit() else self.r_r, self.mnemonic
         )
-        return self._inherit_support(R_R_INSTRUCTION(self.mnemonic, dst, src, opcode))
+        return R_R_INSTRUCTION(self.mnemonic, dst, src, opcode)
 
 
 class Ternary_ALU_INSTRUCTION(ALU_FAMILY):
@@ -847,9 +840,8 @@ class Ternary_ALU_INSTRUCTION(ALU_FAMILY):
         opcode = self._require_opcode(
             self.r_rm_imm8 if imm.size == 1 else self.r_rm_imm, self.mnemonic
         )
-        return self._inherit_support(
-            R_RM_IMM_INSTRUCTION(self.mnemonic, reg, rm, imm, opcode)
-        )
+        return     R_RM_IMM_INSTRUCTION(self.mnemonic, reg, rm, imm, opcode)
+        
 
     def R_R_IMM(self, reg1: operands.GPRegister, reg2: operands.GPRegister, imm):
         if imm.size > 4:
@@ -860,9 +852,8 @@ class Ternary_ALU_INSTRUCTION(ALU_FAMILY):
             self.r_r_imm8 if imm.size == 1 else self.r_r_imm, self.mnemonic
         )
 
-        return self._inherit_support(
-            R_R_IMM_INSTRUCTION(self.mnemonic, reg1, reg2, imm, opcode)
-        )
+        return     R_R_IMM_INSTRUCTION(self.mnemonic, reg1, reg2, imm, opcode)
+        
 
 
 class LEA_INSTRUCTION(R_RM_INSTRUCTION):
@@ -883,7 +874,9 @@ class PUSH_INSTRUCTION:
     def R(reg: operands.GPRegister) -> R_INSTRUCTION:
         if not (reg.is_16bit() or reg.is_64bit()):
             raise exceptions.InvalidRegisterError("push", reg)
-        return R_INSTRUCTION("push", reg, Opcode(bytearray([0x50 + reg.code])))
+
+        
+        return R_INSTRUCTION("push", reg, Opcode(bytearray([int(0x50 + reg.code)]),disable_rex_W=True))
 
     @staticmethod
     def I(imm: operands.Immediate) -> I_INSTRUCTION:
@@ -909,7 +902,7 @@ class POP_INSTRUCTION:
     def R(reg: operands.GPRegister) -> R_INSTRUCTION:
         if not (reg.is_16bit() or reg.is_64bit()):
             raise exceptions.InvalidRegisterError("pop", reg)
-        return R_INSTRUCTION("pop", reg, Opcode(bytearray([0x58 + reg.code])))
+        return R_INSTRUCTION("pop", reg, Opcode(bytearray([0x58 + reg.code]),disable_rex_W=True))
 
     @staticmethod
     def RM(rm: operands.RegMemBase) -> RM_INSTRUCTION:
@@ -938,13 +931,15 @@ class POPF_INSTRUCTION(INSTRUCTION):
 
 class SHR_INSTRUCTION:
     @staticmethod
-    def R_IMM(reg: operands.GPRegister, imm: operands.Immediate) -> R_IMM_INSTRUCTION:
+    def R_IMM(
+        reg: operands.GPRegister, imm: operands.Immediate
+    ) -> R_IMM_INSTRUCTION | R_INSTRUCTION:
         if imm.size > 1:
             raise exceptions.InvalidImmediateError("shr", imm)
         if imm.value == 1:
             if reg.is_8bit():
-                return R_IMM_INSTRUCTION("shr", reg, imm, Opcode(bytearray([0xD0]), 5))
-            return R_IMM_INSTRUCTION("shr", reg, imm, Opcode(bytearray([0xD1]), 5))
+                return R_INSTRUCTION("shr", reg, Opcode(bytearray([0xD0]), 5))
+            return R_INSTRUCTION("shr", reg, Opcode(bytearray([0xD1]), 5))
         if reg.is_8bit():
             return R_IMM_INSTRUCTION("shr", reg, imm, Opcode(bytearray([0xC0]), 5))
         return R_IMM_INSTRUCTION("shr", reg, imm, Opcode(bytearray([0xC1]), 5))
@@ -965,13 +960,13 @@ class SHL_INSTRUCTION:
     def R_IMM(
         reg: operands.GPRegister,
         imm: operands.Immediate = operands.Immediate(1, 1, False),
-    ) -> R_IMM_INSTRUCTION:
+    ) -> R_IMM_INSTRUCTION | R_INSTRUCTION:
         if imm.size > 1:
             raise exceptions.InvalidImmediateError("shr", imm)
         if imm.value == 1:
             if reg.is_8bit():
-                return R_IMM_INSTRUCTION("shl", reg, imm, Opcode(bytearray([0xD0]), 4))
-            return R_IMM_INSTRUCTION("shl", reg, imm, Opcode(bytearray([0xD1]), 4))
+                return R_INSTRUCTION("shl", reg, Opcode(bytearray([0xD0]), 4))
+            return R_INSTRUCTION("shl", reg, Opcode(bytearray([0xD1]), 4))
         if reg.is_8bit():
             return R_IMM_INSTRUCTION("shl", reg, imm, Opcode(bytearray([0xC0]), 4))
         return R_IMM_INSTRUCTION("shl", reg, imm, Opcode(bytearray([0xC1]), 4))
@@ -995,6 +990,10 @@ class CLI_INSTRUCTION(INSTRUCTION):
         return [encoded_bytes.Opcode_Byte(bytearray([0xFA]))]
 
 
+
+
+
+
 class STI_INSTRUCTION(INSTRUCTION):
     def __init__(self, mnemonic: str = "sti"):
         super().__init__(mnemonic)
@@ -1006,11 +1005,12 @@ class STI_INSTRUCTION(INSTRUCTION):
 class JMP_INSTRUCTION:
     @staticmethod
     def REL(rel: operands.Immediate) -> I_INSTRUCTION:
-        if rel.size not in [1,4]:
+        if rel.size not in [1, 4]:
             raise exceptions.InvalidImmediateError("jmp", rel)
         if rel.size == 1:
             return I_INSTRUCTION("jmp", rel, Opcode(bytearray([0xEB])))
         return I_INSTRUCTION("jmp", rel, Opcode(bytearray([0xE9])))
+
     @staticmethod
     def RM(rm: operands.RegMemBase) -> RM_INSTRUCTION:
         return RM_INSTRUCTION(
@@ -1024,21 +1024,23 @@ class JMP_INSTRUCTION:
         return R_INSTRUCTION(
             "jmp",
             reg,
-            Opcode(bytearray([0xFF]), modrm_extension=0b100),
+            Opcode(bytearray([0xFF]), modrm_extension=0b100,disable_rex_W=True),
         )
+
 
 class CALL_INSTRUCTION:
     @staticmethod
-    def REL(rel : operands.Immediate) -> I_INSTRUCTION:
+    def REL(rel: operands.Immediate) -> I_INSTRUCTION:
         if rel.size != 4:
             raise exceptions.InvalidImmediateError("call", rel)
         return I_INSTRUCTION("call", rel, Opcode(bytearray([0xE8])))
+
     @staticmethod
     def RM(rm: operands.RegMemBase) -> RM_INSTRUCTION:
         return RM_INSTRUCTION(
             "call",
             rm,
-            Opcode(bytearray([0xFF]), modrm_extension=0b011),
+            Opcode(bytearray([0xFF]), modrm_extension=0b010),
         )
 
     @staticmethod
@@ -1046,30 +1048,26 @@ class CALL_INSTRUCTION:
         return R_INSTRUCTION(
             "jmp",
             reg,
-            Opcode(bytearray([0xFF]), modrm_extension=0b011),
+            Opcode(bytearray([0xFF]), modrm_extension=0b010,disable_rex_W=True),
         )
 
+
 class IMUL_INSTRUCTION:
-    supports_lock = False
-    supports_rep = False
-    supports_repne = False
     T = TypeVar("T", bound=ALU_FAMILY)
 
     @classmethod
     def UNARY(cls) -> Unary_ALU_INSTRUCTION:
         # imul r/m
-        return cls._inherit_support(
-            Unary_ALU_INSTRUCTION(
+        return Unary_ALU_INSTRUCTION(
                 rm_8=Opcode(bytearray([0xF6]), modrm_extension=0b101),
                 rm=Opcode(bytearray([0xF7]), modrm_extension=0b101),
             )
-        )
+        
 
     @classmethod
     def BINARY(cls) -> Binary_ALU_INSTRUCTION:
         # imul r, r/m
-        return cls._inherit_support(
-            Binary_ALU_INSTRUCTION(
+        return Binary_ALU_INSTRUCTION(
                 r_rm_8=None,  # not valid
                 r_rm=Opcode(bytearray([0x0F, 0xAF])),
                 rm_r_8=None,
@@ -1086,26 +1084,20 @@ class IMUL_INSTRUCTION:
                 rm64_imm8=None,
                 mnemonic="imul",
             )
-        )
+        
 
     @classmethod
     def TERNARY(cls) -> Ternary_ALU_INSTRUCTION:
         # imul r, r/m, imm
-        return cls._inherit_support(
-            Ternary_ALU_INSTRUCTION(
+        return Ternary_ALU_INSTRUCTION(
                 r_rm_imm8=Opcode(bytearray([0x6B])),
                 r_r_imm8=Opcode(bytearray([0x6B])),
                 r_rm_imm=Opcode(bytearray([0x69])),
                 r_r_imm=Opcode(bytearray([0x69])),
-            )
         )
+        
 
-    @classmethod
-    def _inherit_support(cls, instruction: T) -> T:
-        instruction.supports_lock = cls.supports_lock
-        instruction.supports_rep = cls.supports_rep
-        instruction.supports_repne = cls.supports_repne
-        return instruction
+
 
 
 class INSTRUCTIONS:
@@ -1149,8 +1141,9 @@ class INSTRUCTIONS:
         rm64_imm8=Opcode(bytearray([0x83]), 0b101),
     )
     MUL = Unary_ALU_INSTRUCTION(
-        rm_8=Opcode(bytearray([0xF6]), 0b010),
-        rm=Opcode(bytearray([0xF7]), 0b010),
+        rm_8=Opcode(bytearray([0xF6]), 0b100),
+        rm=Opcode(bytearray([0xF7]), 0b100),
+        mnemonic="MUL",
     )
     IMUL = IMUL_INSTRUCTION
     """

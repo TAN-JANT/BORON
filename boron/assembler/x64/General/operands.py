@@ -62,7 +62,7 @@ class SYMBOL(Immediate):
         return SYMBOL_Byte(self.name,self.size,self.is_relative,self.addend)
 
 class SIB(RegMemBase):
-    def __init__(self):
+    def __init__(self,size:int=1):
         super().__init__()
         self.base: GPRegister | None = None
         self.index: GPRegister | None = None
@@ -223,13 +223,12 @@ class SIB(RegMemBase):
         self.base = base
         self.index = index
         self.scale = scale
-        self.offset = offset.value if offset else 0
+        self.offset = offset.value if offset is not None else 0
 
         self.__base_code = base.get_code()
         self.__index_code = index.get_code()
         self.B = base.is_expanded()
         self.X = index.is_expanded()
-
         if offset is None or offset.value == 0:
             self.displacement = None
             self.mod = 0b00

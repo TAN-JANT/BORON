@@ -3,7 +3,7 @@ from boron.assembler.exceptions import AssemblerError
 class OperandSizeMismatchError(AssemblerError):
     def __init__(self, mnemonic, *operands):
         super().__init__(
-            f"{mnemonic}: operand size mismatch ({', '.join(op.name + ':' + str(op.size) for op in operands)})"
+            f"{mnemonic}: operand size mismatch ({', '.join(str(op) + ':' + str(op.size) for op in operands)})"
         )
 
 class InvalidRegisterError(AssemblerError):

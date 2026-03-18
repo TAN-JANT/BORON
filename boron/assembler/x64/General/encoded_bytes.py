@@ -1,5 +1,4 @@
 from boron.assembler.encoded_bytes import EncodedByte,IMM_Byte,Opcode_Byte,MODRM_Byte,Prefix_Byte,SIB_Byte,SYMBOL_Byte
-from typing import Literal
 from enum import Enum
 
 class REX_Byte(EncodedByte):

@@ -1,0 +1,27 @@
+from boron.disassembler.x64 import disassembler
+
+input_bytes = b"\x4f\x88\x09\x66\x89\x02\x89\x0B\x48\x8B\x06\x02\x03\x66\x03\x01\x03\x02\x48\x03\x07\x0A\x19\x66\x0B\x1B\x0B\x0A\x48\x0B\x10\x1A\x09\x66\x1B\x0B\x1B\x12\x48\x1B\x18\x22\x11\x66\x23\x13\x23\x32\x4C\x23\x00\x2A\x01\x66\x2B\x03\x2B\x0A\x4C\x2B\x08\x32\x19\x66\x33\x1B\x33\x12\x4C\x33\x10\x3A\x09\x66\x3B\x0B\x3B\x12\x4C\x3B\x18\x84\x01\x66\x85\x03"
+
+print(input_bytes.hex())
+
+disasm = disassembler.Disassembler(bytearray(input_bytes))
+
+
+for i in disasm.rules[1].table.table:
+    print(i)
+
+"""
+disasm.disassemble()
+
+offset = 0
+
+for entry in disasm.ctx.disassembled:
+    hexd = entry.bytes.hex(" ")
+    
+    # padding (byte kısmını hizalamak için)
+    padded_hex = f"{hexd:<15}"
+    
+    print(f"{offset:04x}: {padded_hex} : {entry.expr}")
+    
+    offset += len(entry.bytes)
+"""

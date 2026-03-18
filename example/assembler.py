@@ -3,6 +3,7 @@ import ctypes
 
 from boron.assembler.x64.General import instructions, operands
 from boron.assembler.x64.General.registers import GPRegisters
+from boron.codegen.executer import Executer
 
 
 # message
@@ -50,6 +51,10 @@ program = [
     instructions.INSTRUCTIONS.SYSCALL(),
 ]
 
+
+
+
+
 # assemble instructions to bytes
 code = b""
 
@@ -59,6 +64,7 @@ for instr in program:
         code += i.emit()
 # append string AFTER code
 payload = code + hello
+print("payload:",payload)
 
 # allocate RWX memory
 mem = mmap.mmap(
@@ -75,3 +81,5 @@ mem.write(payload)
 addr = ctypes.c_void_p.from_buffer(mem)
 entry = ctypes.CFUNCTYPE(None)(ctypes.addressof(addr))
 entry()
+
+
