@@ -1,9 +1,10 @@
+from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Literal
-from .prefixes import PrefixState, seg_prefixes,PrefixSupports
+from .prefixes import PrefixState, seg_prefixes, PrefixSupports,REX
 from .rules import Rule, CTX, Instruction
 
-REG8 = [
+GPREG8 = [
     "al",
     "cl",
     "dl",
@@ -21,7 +22,7 @@ REG8 = [
     "r14b",
     "r15b",
 ]
-REG8R = [
+GPREG8R = [
     "al",
     "cl",
     "dl",
@@ -40,7 +41,7 @@ REG8R = [
     "r15b",
 ]
 
-REG16 = [
+GPREG16 = [
     "ax",
     "cx",
     "dx",
@@ -60,7 +61,7 @@ REG16 = [
 ]
 
 
-REG64 = [
+GPREG64 = [
     "rax",
     "rcx",
     "rdx",
@@ -79,7 +80,7 @@ REG64 = [
     "r15",
 ]
 
-REG32 = [
+GPREG32 = [
     "eax",
     "ecx",
     "edx",
@@ -98,11 +99,134 @@ REG32 = [
     "r15d",
 ]
 
+GPREGS = {
+    1: GPREG8,
+    2: GPREG16,
+    4: GPREG32,
+    8: GPREG64,
+}
+
+
+class Decoder:
+    def decode(self, rule: GeneralRule, ctx: CTX, current_state: PrefixState):
+        raise NotImplementedError
+
+
+class PlaceHolder_Decoder(Decoder):
+    def decode(self, rule: GeneralRule, ctx: CTX, current_state: PrefixState):
+        raise NotImplementedError
+
+
+class R_RM_Decoder(Decoder):
+    def __init__(self, name: str, direction: bool, is8: bool, supports: PrefixSupports):
+        self.name = name
+        self.direction = direction
+        self.is8 = is8
+        self.supports = supports
+
+    def decode(self, rule: GeneralRule, ctx: CTX, current_state: PrefixState):
+        modrm = ctx.code[ctx.index]
+        mod = (modrm >> 6) & 3
+        reg = (modrm >> 3) & 7
+        rm = modrm & 7
+        ctx.index += 1
+
+        size = rule.get_operand_size(current_state, self.is8)
+        r_op = rule.get_r_operand(current_state, reg, size)
+        rm_op = rule.get_rm_operand(ctx, current_state, mod, rm, size)
+
+        if self.direction:
+            op1, op2 = r_op, rm_op
+        else:
+            op1, op2 = rm_op, r_op
+
+        prefix_bytes = []
+
+        prefix_bytes.extend(
+            rule.emit_invalid_prefixes(ctx, current_state, self.supports)
+        )
+
+        rex = current_state.rex
+        expr = f"{self.name} {op1}, {op2}"
+        if rex:
+            if rex.w == 0 and rex.x == 0 and rex.r == 0 and rex.b == 0 and not self.is8:
+                expr = rule.format_rex(rex) + " " + expr
+            elif mod == 0b11:
+                if rex.x:
+                    expr = rule.format_rex(rex) + " " + expr
+
+                if current_state.addr_size:
+                    expr = "addr32 " + expr
+            elif mod != 0b11 and reg != 0b100:
+                expr = rule.format_rex(rex) + " " + expr
+        if current_state.op_size and size != 2:
+            expr = "data16 " + expr
+
+        instr_bytes = bytearray(prefix_bytes) + bytearray(
+            ctx.code[rule.start_idx : ctx.index]
+        )
+        ctx.disassembled.append(Instruction(expr, instr_bytes))
+
+
+class PUSH_POP_Decoder(Decoder):
+    def __init__(self, name: str, reg: int):
+        super().__init__()
+        self.name = name
+        self.supports = PrefixSupports(False, False, False, False, True, False)
+        self.reg = reg
+
+    def decode(self, rule: GeneralRule, ctx: CTX, current_state: PrefixState):
+        prefix_bytes = []
+        prefix_bytes.extend(
+            rule.emit_invalid_prefixes(ctx, current_state, self.supports)
+        )
+        regmap = rule.get_reg_table(current_state, False)
+
+        expr = f"{self.name} {regmap[self.reg]}"
+
+        instr_bytes = bytearray(prefix_bytes) + bytearray(
+            ctx.code[rule.start_idx : ctx.index]
+        )
+        ctx.disassembled.append(Instruction(expr, instr_bytes))
+
+
+class IMM_Unary_Decoder(Decoder):
+    def __init__(
+        self,
+        name: str,
+        implicit_registers: list[int],
+        is8: bool,
+        supports: PrefixSupports,
+    ) -> None:
+        super().__init__()
+        self.name = name
+        self.implicit_registers = implicit_registers
+        self.supports = supports
+        self.is8 = is8
+
+    def decode(self, rule: GeneralRule, ctx: CTX, current_state: PrefixState):
+        prefix_bytes = []
+        prefix_bytes.extend(
+            rule.emit_invalid_prefixes(ctx, current_state, self.supports)
+        )
+        reg_table = rule.get_reg_table(current_state, self.is8)
+        imm = rule.get_imm_operand(ctx,current_state,self.is8,False)
+        expr = f"{self.name} {','.join([reg_table[r] for r in self.implicit_registers])}{', 'if self.implicit_registers else ''}{imm}"
+        rex = current_state.rex
+        if rex:
+            if rex.w == 0:
+                expr = rule.format_rex(rex) + " " + expr
+        instr_bytes = bytearray(prefix_bytes) + bytearray(
+            ctx.code[rule.start_idx : ctx.index]
+        )
+        ctx.disassembled.append(Instruction(expr, instr_bytes))
+
+
 
 @dataclass
 class ByteTableEntry:
     name: str
-    decoder: Callable
+    decoder: Decoder
 
 
 @dataclass
@@ -120,25 +244,13 @@ class GroupEntry:
         return self.ops[reg_bits]
 
 
-def get_reg_table(size: int, rex_present: bool):
-    if size == 1:  # 8-bit
-        return REG8R if rex_present else REG8
-    if size == 2:  # 16-bit
-        return REG16
-    if size == 4:  # 32-bit
-        return REG32
-    if size == 8:  # 64-bit
-        return REG64
-    raise ValueError("invalid register size")
-
-
 class GeneralRule(Rule):
     def __init__(self) -> None:
         super().__init__()
         self.start_idx: int = 0
         self.table = ByteTable(self)
 
-    def apply(self, ctx: CTX,current_state:PrefixState) -> bool:
+    def apply(self, ctx: CTX, current_state: PrefixState) -> bool:
         self.start_idx = ctx.index
         opcode = byte = ctx.code[ctx.index]
         # E0x0F multi Byte opcodes (I Dont care yet...)
@@ -150,13 +262,13 @@ class GeneralRule(Rule):
                 return False
             ctx.index += 1
             try:
-                entry.decoder(ctx,current_state)
+                entry.decoder.decode(self, ctx, current_state)
                 # save all processed bytes
                 instr_bytes = bytearray(current_state.prefix_list)
                 instr_bytes.extend(ctx.code[self.start_idx : ctx.index])
                 ctx.disassembled[-1].bytes = instr_bytes
                 current_state.reset()
-                
+
                 return True
             except Exception as e:
 
@@ -165,32 +277,57 @@ class GeneralRule(Rule):
                 raise e
         return False
 
-    def get_r_operand(self, current_state:PrefixState, reg: int, size: int):
+    def get_r_operand(self, current_state: PrefixState, reg: int, size: int):
         rex = current_state.rex
         if rex and rex.r:
             reg |= 8
 
-        table = get_reg_table(size, rex is not None)
+        table = self.get_reg_table(current_state, size == 1)
         return table[reg]
 
-    def get_rm_operand(self, ctx: CTX, current_state:PrefixState,mod: int, rm: int, size: int):
+    def get_imm_operand(self, ctx: CTX, current_state:PrefixState,is8:bool, allowed64:bool=False) -> str:
+        size = self.get_operand_size(current_state,is8)
+        if size == 1:
+            val = int.from_bytes(ctx.code[ctx.index:ctx.index + 1], "little", signed=True)
+            ctx.index += 1
+            return f"0x{val:X}"
+
+        if size == 2:
+            val = int.from_bytes(ctx.code[ctx.index:ctx.index + 2], "little", signed=True)
+            ctx.index += 2
+            return f"0x{val:X}"
+
+        if size == 4:
+            val = int.from_bytes(ctx.code[ctx.index:ctx.index + 4], "little", signed=True)
+            ctx.index += 4
+            return f"0x{val:X}"
+
+        if size == 8:
+            if not allowed64:
+                val = int.from_bytes(ctx.code[ctx.index:ctx.index + 4], "little", signed=True)
+                ctx.index += 4
+                return f"0x{val:X}"
+            val = int.from_bytes(ctx.code[ctx.index:ctx.index + 8], "little", signed=True)
+            ctx.index += 8
+            return f"0x{val:X}"
+
+        raise ValueError("invalid imm size")
+
+    def get_rm_operand(
+        self, ctx: CTX, current_state: PrefixState, mod: int, rm: int, size: int
+    ):
         rex = current_state.rex
 
         if rex and rex.b:
             rm |= 8
 
-        table = get_reg_table(size, rex is not None)
-        base_table = REG32 if current_state.addr_size else REG64 
+        table = self.get_reg_table(current_state, size == 1)
+        base_table = GPREG32 if current_state.addr_size else GPREG64
 
         # register mode
         if mod == 0b11:
             return table[rm]
-        ptr_list = {
-            1:"BYTE  PTR ",
-            2:"WORD  PTR ",
-            4:"DWORD PTR ",
-            8:"QWORD PTR "
-        }
+        ptr_list = {1: "BYTE  PTR ", 2: "WORD  PTR ", 4: "DWORD PTR ", 8: "QWORD PTR "}
         parts = []
 
         # SIB
@@ -200,7 +337,9 @@ class GeneralRule(Rule):
 
             scale = (sib >> 6) & 3
             index = (sib >> 3) & 7
+            raw_index = index
             base = sib & 7
+            raw_base = base
 
             if rex:
                 if rex.x:
@@ -210,13 +349,13 @@ class GeneralRule(Rule):
 
             scale_val = [1, 2, 4, 8][scale]
 
-            if index != 4:
+            if raw_index != 4:
                 parts.append(f"{base_table[index]}*{scale_val}")
 
-            if base != 5 or mod != 0:
+            if raw_base != 5 or mod != 0:
                 parts.insert(0, base_table[base])
 
-            if base == 5 and mod == 0:
+            if raw_base == 5 and mod == 0:
                 disp = int.from_bytes(
                     ctx.code[ctx.index : ctx.index + 4], "little", signed=True
                 )
@@ -262,15 +401,7 @@ class GeneralRule(Rule):
         return mem
 
     def emit_invalid_prefixes(
-        self,
-        ctx: CTX,
-        current_state:PrefixState,
-        lock=False,
-        rep=False,
-        segment=False,
-        op_size=False,
-        addr_size=False,
-        rex=False,
+        self, ctx: CTX, current_state: PrefixState, supports: PrefixSupports
     ) -> list[int]:
 
         # Prefix groups
@@ -282,22 +413,22 @@ class GeneralRule(Rule):
 
         for p in current_state.prefix_list:
             invalid = False
-            if p == 0xF0 and not lock:
+            if p == 0xF0 and not supports.lock:
                 invalid = True
                 current_state.lock = False
-            elif p in (0xF2, 0xF3) and not rep:
+            elif p in (0xF2, 0xF3) and not supports.repeat:
                 invalid = True
                 current_state.repeat = None
-            elif p in seg_prefixes and not segment:
+            elif p in seg_prefixes and not supports.segment:
                 invalid = True
                 current_state.segment = None
-            elif p == 0x66 and not op_size:
+            elif p == 0x66 and not supports.op_size:
                 invalid = True
                 current_state.op_size = False
-            elif p == 0x67 and not addr_size:
+            elif p == 0x67 and not supports.addr_size:
                 invalid = True
                 current_state.addr_size = False
-            elif 0x40 <= p <= 0x4F and not rex:
+            elif 0x40 <= p <= 0x4F and not supports.rex:
                 invalid = True
                 current_state.rex = None
 
@@ -305,7 +436,6 @@ class GeneralRule(Rule):
                 ctx.disassembled.append(Instruction(f"DB {p:02X}", bytearray([p])))
                 continue
 
-            
             if p == 0xF0 or p in (0xF2, 0xF3):
                 group1.append(p)
             elif p in seg_prefixes:
@@ -321,7 +451,20 @@ class GeneralRule(Rule):
 
         return valid_prefix_bytes
 
-    def get_operand_size(self, current_state:PrefixState, is8: bool) -> int:
+    def get_reg_table(self, current_state: PrefixState, is8: bool):
+        size = self.get_operand_size(current_state, is8)
+        rex_present = current_state.rex is not None
+        if size == 1:  # 8-bit
+            return GPREG8R if rex_present else GPREG8
+        if size == 2:  # 16-bit
+            return GPREG16
+        if size == 4:  # 32-bit
+            return GPREG32
+        if size == 8:  # 64-bit
+            return GPREG64
+        raise ValueError("invalid register size")
+
+    def get_operand_size(self, current_state: PrefixState, is8: bool) -> int:
         if is8:
             return 1
 
@@ -334,165 +477,48 @@ class GeneralRule(Rule):
             return 2
 
         return 4
+    
+    def format_rex(self,rex:REX) -> str:
+        parts = []
+        if rex.w: parts.append("W")
+        if rex.r: parts.append("R")
+        if rex.x: parts.append("X")
+        if rex.b: parts.append("B")
 
-    def decode_r_rm_instruction(
-        self, ctx: CTX,  current_state:PrefixState ,name: str, direction: bool, is8: bool = False,
-        supports: PrefixSupports = PrefixSupports()
-    ):
-        modrm = ctx.code[ctx.index]
-        mod = (modrm >> 6) & 3
-        reg = (modrm >> 3) & 7
-        rm = modrm & 7
-        ctx.index += 1
-
-        size = self.get_operand_size(current_state,is8)
-        r_op = self.get_r_operand(current_state,reg, size)
-        rm_op = self.get_rm_operand(ctx, current_state,mod, rm, size)
-
-        if direction:
-            op1, op2 = r_op, rm_op
-        else:
-            op1, op2 = rm_op, r_op
-
-        prefix_bytes = []
-
-        prefix_bytes.extend(
-            self.emit_invalid_prefixes(
-                ctx,
-                current_state,
-                lock=supports.lock,
-                rep=supports.repeat,
-                segment=supports.segment,
-                op_size=supports.op_size,
-                addr_size=supports.addr_size,
-                rex=supports.rex,
-            )
-        )
-
-        rex = current_state.rex
-        expr = f"{name} {op1}, {op2}"
-        if rex:
-            if rex.w == 0 and rex.x == 0 and rex.r == 0 and rex.b == 0:
-                expr = "REX " + expr
-            if mod == 0b11:
-                if rex.x:
-                    expr = "REX.X " + expr
-                if current_state.addr_size:
-                    expr = "addr32 " + expr
-            if mod != 0b11 and reg != 0b100:
-                if rex.x:
-                    expr = "REX.X " + expr
-        if current_state.op_size and size != 2:
-            expr = "data16 " + expr
-
-        instr_bytes = (
-            bytearray(prefix_bytes)
-            + bytearray(ctx.code[self.start_idx : ctx.index])
-        )
-        ctx.disassembled.append(Instruction(expr, instr_bytes))
-
-    def decode_unary_no_modrm(self, ctx: CTX,  current_state:PrefixState ,name: str, is8: bool = False,
-        supports: PrefixSupports = PrefixSupports()):
-
-        size = self.get_operand_size(current_state,is8)
-        r_op = self.get_r_operand(current_state,0, size) 
-
-        prefix_bytes = []
-
-        prefix_bytes.extend(
-            self.emit_invalid_prefixes(
-                ctx,
-                current_state,
-                lock=supports.lock,
-                rep=supports.repeat,
-                segment=supports.segment,
-                op_size=supports.op_size,
-                addr_size=supports.addr_size,
-                rex=supports.rex,
-            )
-        )
-
-        if size == 1:
-            imm = int.from_bytes(
-                    ctx.code[ctx.index : ctx.index + 1], "little", signed=True
-            )
-            ctx.index += 1
-
-        elif size == 2:
-            imm = int.from_bytes(
-                    ctx.code[ctx.index : ctx.index + 2], "little", signed=True
-            )
-            ctx.index += 2
-
-        else:
-            imm = int.from_bytes(
-                    ctx.code[ctx.index : ctx.index + 4], "little", signed=True
-            )
-            ctx.index += 4
-
-        rex = current_state.rex
-        expr = f"{name} {r_op}, {imm}"
-        if rex:
-            if rex.r == 0 and not is8:
-                expr = f"REX " + expr
-
-        if current_state.addr_size:
-            expr = "addr32" + expr
-
-        if current_state.op_size and size != 2:
-            expr = "data16 " + expr
-
-        instr_bytes = (
-            bytearray(prefix_bytes)
-            + bytearray(ctx.code[self.start_idx : ctx.index])
-        )
-        ctx.disassembled.append(Instruction(expr, instr_bytes))
-
-    """
-    def decode_group(self, ctx: CTX,current_state:PrefixState, group_name: str, is8: bool = False):
-        if self.table.contains_group(group_name):
-            raise ValueError(f"Unknown group: {group_name}")
-
-        modrm = ctx.code[ctx.index]
-        reg = (modrm >> 3) & 0b111
-
-        group = self.table.get_group(group_name)
-        op_entry = group.get_op(reg)
-        op_entry.decoder(ctx)
-    """
-    def decode_placeholder(self, ctx): ...
+        # tek parça çıktı
+        return "REX" + ("" if not parts else "." + "".join(parts))
 
 
 class ByteTable:
-    def __init__(self,rule:GeneralRule):
+    def __init__(self, rule: GeneralRule):
         # 0x00–0xFF → 256 eleman
-        self.table: List[ByteTableEntry] = [ByteTableEntry("INV",rule.decode_placeholder)] * 0x100
+        self.table: List[ByteTableEntry] = [
+            ByteTableEntry("INV", PlaceHolder_Decoder())
+        ] * 0x100
         names = ["ADD", "OR", "ADC", "SBB", "AND", "SUB", "XOR"]
-        for i in range(0,7):
+        for i in range(0, 7):
             for j in range(6):
-                is8     = (j % 2) == 0
-                opcode  = i*8 + j
-                unary   = j > 3
-                lock    = j < 2
+                is8 = (j % 2) == 0
+                opcode = i * 8 + j
+                unary = j > 3
+                lock = j < 2
                 direction = not lock
-                name    = names[i]
+                name = names[i]
                 if unary:
 
                     self.table[opcode] = ByteTableEntry(
                         name,
-                        lambda ctx, state, name=name, is8=is8, lock=lock: rule.decode_unary_no_modrm(
-                            ctx,
-                            state,
+                        IMM_Unary_Decoder(
                             name,
+                            [0],
                             is8,
-                            PrefixSupports(lock, False, True, True, True, True),
+                            PrefixSupports(lock, False, False, True, True, False),
                         ),
                     )
+                    continue
                 self.table[opcode] = ByteTableEntry(
                     name,
-                    lambda ctx, state, name=name, direction=direction, is8=is8, lock=lock: rule.decode_r_rm_instruction(
-                        ctx,
-                        state,
+                    R_RM_Decoder(
                         name,
                         direction,
                         is8,
@@ -500,44 +526,109 @@ class ByteTable:
                     ),
                 )
 
-        for j in range(0,7):
-            is8     = (j % 2) == 0
-            opcode  = 0x38 + j
-            unary   = j > 3
-            direction = j>= 2
+        for j in range(0, 7):
+            is8 = (j % 2) == 0
+            opcode = 0x38 + j
+            unary = j > 3
+            direction = j >= 2
             if unary:
                 self.table[opcode] = ByteTableEntry(
-                        "CMP",
-                        lambda ctx, state, is8=is8: rule.decode_unary_no_modrm(
-                            ctx,
-                            state,
+                    "CMP",
+                    IMM_Unary_Decoder(
                             "CMP",
+                            [0],
                             is8,
-                            PrefixSupports(False, False, True, True, True, True),
+                            PrefixSupports(False, False, False, True, True, False),
                         ),
-                    )
+                )
+                continue
             self.table[opcode] = ByteTableEntry(
                 "CMP",
-                lambda ctx, state, name="CMP", direction=direction, is8=is8: rule.decode_r_rm_instruction(
-                    ctx,
-                    state,
-                    name,
+                R_RM_Decoder(
+                    "CMP",
                     direction,
                     is8,
                     PrefixSupports(False, False, True, True, True, True),
                 ),
             )
 
+        self.table[0x63] = ByteTableEntry(
+            "MOVSXD",
+            R_RM_Decoder(
+                "MOVSXD",
+                True,
+                False,
+                PrefixSupports(False, False, True, True, False, True),
+            ),
+        )
+
+        for j in range(2):
+            opcode = 0x88 + j
+            self.table[opcode] = ByteTableEntry(
+                "MOV",
+                R_RM_Decoder(
+                    "MOV",
+                    False,
+                    j == 0,
+                    PrefixSupports(False, False, True, True, True, True),
+                ),
+            )
+
+        self.table[0x8A] = ByteTableEntry(
+            "MOV",
+            R_RM_Decoder(
+                "MOV",
+                True,
+                True,
+                PrefixSupports(False, False, True, True, True, True),
+            ),
+        )
+        self.table[0x8B] = ByteTableEntry(
+            "MOV",
+            R_RM_Decoder(
+                "MOV",
+                True,
+                False,
+                PrefixSupports(False, False, True, True, False, True),
+            ),
+        )
+        
+        for j in range(0,8):
+            opcode = 0x50 + j
+
+            self.table[opcode] = ByteTableEntry(
+                "PUSH",
+                PUSH_POP_Decoder("PUSH",j)
+            )
+        
+        for j in range(0,8):
+            opcode = 0x58 + j
+
+            self.table[opcode] = ByteTableEntry(
+                "POP",
+                PUSH_POP_Decoder("POP",j)
+            )
+        
+        self.table[0x68] = ByteTableEntry(
+            "PUSH",
+            IMM_Unary_Decoder(
+                "PUSH",
+                [],
+                False,
+                PrefixSupports(False, False, False, False, True, False),
+            ),
+        )
+
     def contains(self, op: int) -> bool:
-        if not (0 <= op <= 0xFF):
-            return False
-        return True
+        return 0 <= op <= 0xFF and self.table[op].name != "INV"
 
     def get(self, op: int) -> ByteTableEntry:
         if not self.contains(op):
             raise KeyError(f"Opcode {op:02X} not in table")
         return self.table[op]
-    def contains_group(self,name:str)->bool:
+
+    def contains_group(self, name: str) -> bool:
         return False
-    def get_group(self,name:str)->Optional[GroupEntry]:
+
+    def get_group(self, name: str) -> Optional[GroupEntry]:
         return None

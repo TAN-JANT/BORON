@@ -1,6 +1,7 @@
 # BORON Assembler
 
 # _UNDER DEVELOPMENT_ - _TRY IT AT YOUR OWN RISK_
+# _STILL NEEDS TO DEVELOPED_
 
 ## What is Boron?
 Boron is a hobby project that implements an x86-64 assembler in Python.  
@@ -21,6 +22,11 @@ You can dynamically assemble instructions at runtime and execute them immediatel
 - **Relocatable ELF32/ELF64 files only:** COFF format and other outputs are not supported yet.  
 - **Under active development:** Bugs and breaking changes are expected.
 - **Not commented yet**: I will add comments to the code.
+
+## What's New
+
+- **Simple built-in runtime execution** : An class added for it but I need to work on it more
+- **Simple disassembler** : YAY!
 
 ## Next steps
 
