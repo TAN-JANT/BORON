@@ -1,35 +1,34 @@
-from .section import Relocation,Section,Symbol,SectionFlags,RelocationType
+from .section import Relocation, Section, Symbol, SectionFlags, RelocationType
 from .builder import Builder
-from boron import ARCH
-import sys
-import ctypes
-
-if sys.platform == "win32":
-    # Windows Sabitleri
-    MEM_COMMIT = 0x1000
-    MEM_RESERVE = 0x2000
-    PAGE_READWRITE = 0x04
-    PAGE_EXECUTE_READWRITE = 0x40  # Gerekirse
-    PAGE_EXECUTE_READ = 0x20
-else:
-    # Linux ve macOS (POSIX) Sabitleri
-    import mmap
-    PROT_READ = 0x01
-    PROT_WRITE = 0x02
-    PROT_EXEC = 0x04
-    MAP_ANONYMOUS = 0x20 if sys.platform == "linux" else 0x1000 # macOS için farklıdır
-    MAP_PRIVATE = 0x02
-
-
 import sys
 import ctypes
 import mmap
 
+
+# --------------------------------------------------
+# PLATFORM CONSTANTS
+# --------------------------------------------------
+if sys.platform == "win32":
+    MEM_COMMIT = 0x1000
+    MEM_RESERVE = 0x2000
+    PAGE_READWRITE = 0x04
+    PAGE_EXECUTE_READWRITE = 0x40
+else:
+    PROT_READ = 0x01
+    PROT_WRITE = 0x02
+    PROT_EXEC = 0x04
+    MAP_ANONYMOUS = 0x20 if sys.platform == "linux" else 0x1000
+    MAP_PRIVATE = 0x02
+
+
+# --------------------------------------------------
+# MEMORY MANAGER
+# --------------------------------------------------
 class MemoryManager:
     PAGE_SIZE = 4096
 
     @staticmethod
-    def align_up(value, alignment) -> int:
+    def align_up(value, alignment):
         return (value + alignment - 1) & ~(alignment - 1)
 
     @staticmethod
@@ -39,132 +38,179 @@ class MemoryManager:
         is_x = SectionFlags.EXEC in flags
 
         if sys.platform == "win32":
-            # [Windows Memory Protection Constants](https://learn.microsoft.com)
             if is_x:
-                return 0x40 if is_w else 0x20 # PAGE_EXECUTE_READWRITE : PAGE_EXECUTE_READ
-            return 0x04 if is_w else 0x02     # PAGE_READWRITE : PAGE_READONLY
+                return 0x40 if is_w else 0x20
+            return 0x04 if is_w else 0x02
         else:
-            # [POSIX mmap/mprotect flags](https://man7.org)
             p = 0
-            if is_r: p |= mmap.PROT_READ
-            if is_w: p |= mmap.PROT_WRITE
-            if is_x: p |= mmap.PROT_EXEC
+            if is_r:
+                p |= PROT_READ
+            if is_w:
+                p |= PROT_WRITE
+            if is_x:
+                p |= PROT_EXEC
             return p
 
 
+# --------------------------------------------------
+# EXECUTER
+# --------------------------------------------------
 class Executer:
     def __init__(self, builder: Builder):
         self.builder = builder
+        self.base_addr = None
+        self.offsets = {}
+        self.symbols = {}
+        self._mmap = None
 
-    def execute(self,entry_symbol:str="_start") -> None:
-        """
-        1: Generate the binary data for each section.
-        2: Resolve relocations.
-        3: check for undefined symbols. and raise an error if any are found.
-        4: allocate memory for the sections.
-        5: write section binaries into memory.
-        6: apply relocations with the allocated memory address.
-        7: set memory permissions according to section flags.
-        8: jump to the entry point.
-        """
-        symbols :dict[str,tuple[Section,Symbol]]= {} # all symbols gathered together
-        binary  = bytearray()
-        offsets :dict[Section,int]= {} # self.builder.sections -> memory offset of the section
-        relocations :list[tuple[Section,Relocation]]= [] # all relocations gathered together
-        for section_name,section in self.builder.sections.items():
-            binary += section.content
-            for symbol in section.symbols:
-                if symbol.name in symbols:
-                    raise ValueError(f"Duplicate symbol '{symbol.name}' found in section '{section_name}'")
-                # check for undefined symbols
-                if not symbol.defined:
-                    raise ValueError(f"Undefined symbol '{symbol.name}' found in section '{section_name}'")# TODO: add more exception classes
-                symbols[symbol.name] = (section, symbol)
-            for reloc in section.relocations:
-                relocations.append((section, reloc))
+    # --------------------------------------------------
+    # ASSEMBLE
+    # --------------------------------------------------
+    def assemble(self):
+        PAGE = MemoryManager.PAGE_SIZE
 
-        # allocate memory for the sections (Platform-independent)
+        symbols = {}
+        offsets = {}
+        relocations = []
 
-        total_alloc_size = 0
+        # ==============================
+        # 1. PAGE-SAFE LAYOUT
+        # ==============================
+        total_size = 0
 
-        for name, sec in self.builder.sections.items():
-            # Align sections
-            total_alloc_size = MemoryManager.align_up(total_alloc_size, MemoryManager.PAGE_SIZE)
-            offsets[sec] = total_alloc_size
-            total_alloc_size += max(sec.size, len(sec.content))
+        for section_name, section in self.builder.sections.items():
 
-        # Memory allocation (Platform-specific)
+            total_size = MemoryManager.align_up(total_size, PAGE)
+
+            offsets[section] = total_size
+
+            sec_size = max(len(section.content), section.size)
+            sec_size = MemoryManager.align_up(sec_size, PAGE)
+
+            total_size += sec_size
+
+            for sym in section.symbols:
+                if sym.name in symbols:
+                    raise ValueError(f"Duplicate symbol {sym.name}")
+                if not sym.defined:
+                    raise ValueError(f"Undefined symbol {sym.name}")
+
+                symbols[sym.name] = (section, sym)
+
+            for rel in section.relocations:
+                relocations.append((section, rel))
+
+        # ==============================
+        # 2. ALLOCATE MEMORY
+        # ==============================
         if sys.platform == "win32":
-            # [VirtualAlloc Documentation](https://learn.microsoft.com)
             base_addr = ctypes.windll.kernel32.VirtualAlloc(
-                0, total_alloc_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE
+                0,
+                total_size,
+                MEM_COMMIT | MEM_RESERVE,
+                PAGE_READWRITE
             )
         else:
-            # [POSIX mmap Documentation](https://man7.org)
-            m = mmap.mmap(-1, total_alloc_size, mmap.MAP_PRIVATE | MAP_ANONYMOUS, PROT_READ | PROT_WRITE) # allocating with all permissions, we will change it later
-            base_addr = ctypes.addressof(ctypes.c_char.from_buffer(m))
+            self._mmap = mmap.mmap(
+                -1,
+                total_size,
+                mmap.MAP_PRIVATE | MAP_ANONYMOUS,
+                PROT_READ | PROT_WRITE
+            )
+            base_addr = ctypes.addressof(ctypes.c_char.from_buffer(self._mmap))
 
         if not base_addr:
-            raise MemoryError("Could not allocate memory for execution.")
+            raise MemoryError("Allocation failed")
 
-        # 5: Write sections into memory
-        for sec, offset in offsets.items():
+        # ==============================
+        # 3. WRITE SECTIONS
+        # ==============================
+        for sec, off in offsets.items():
             if sec.content:
-                dest_ptr = base_addr + offset
-                ctypes.memmove(dest_ptr, bytes(sec.content), len(sec.content))
+                ctypes.memmove(
+                    base_addr + off,
+                    bytes(sec.content),
+                    len(sec.content)
+                )
 
-        # 6: Apply relocations
-        for reloc_sec, reloc in relocations:
-            if reloc.symbol.name not in symbols or not reloc.symbol.defined:
-                raise ValueError(f"Relocation references undefined symbol '{reloc.symbol.name}' in section '{reloc_sec.name}'")
+        # ==============================
+        # 4. RELOCATIONS
+        # ==============================
+        for sec, rel in relocations:
+            target_sec, target_sym = symbols[rel.symbol.name]
 
-            target_sec, target_sym = symbols[reloc.symbol.name]
             target_addr = base_addr + offsets[target_sec] + target_sym.offset
-            patch_addr = base_addr + offsets[reloc_sec] + reloc.offset
+            patch_addr = base_addr + offsets[sec] + rel.offset
 
             value = target_addr
-            if reloc.type == RelocationType.RELATIVE:
-                value = (target_addr - patch_addr - reloc.symbol.size)
 
-            if reloc.symbol.size == 1:
-                ctype = ctypes.c_uint8
-                mask = 0xFF
-            elif reloc.symbol.size == 2:
-                ctype = ctypes.c_uint16
-                mask = 0xFFFF
-            elif reloc.symbol.size == 4:
-                ctype = ctypes.c_uint32
-                mask = 0xFFFFFFFF
-            elif reloc.symbol.size == 8:
-                ctype = ctypes.c_uint64
-                mask = 0xFFFFFFFFFFFFFFFF
-            else:
-                raise ValueError(f"Unsupported symbol size '{reloc.symbol.size}' in section '{reloc_sec.name}'")
+            if rel.type == RelocationType.RELATIVE:
+                value = target_addr - patch_addr - rel.symbol.size
 
-            # relocation
-            ctype.from_address(patch_addr).value = value & mask
+            size_map = {
+                1: ctypes.c_uint8,
+                2: ctypes.c_uint16,
+                4: ctypes.c_uint32,
+                8: ctypes.c_uint64,
+            }
 
-        # 7: Apply specific section permissions (RO, RX, RW)
-        for sec, offset in offsets.items():
-            native_flags = MemoryManager.get_native_flags(sec.flags)
-            target_addr = base_addr + offset
-            # İzinler sayfa boyutunda uygulanmalıdır
-            aligned_size = MemoryManager.align_up(sec.size, MemoryManager.PAGE_SIZE)
+            if rel.symbol.size not in size_map:
+                raise ValueError("Unsupported relocation size")
+
+            ctype = size_map[rel.symbol.size]
+            ctypes.cast(patch_addr, ctypes.POINTER(ctype)).contents.value = value
+
+        # ==============================
+        # 5. PERMISSIONS (NO BROKEN mprotect)
+        # ==============================
+        if sys.platform != "win32":
+            libc = ctypes.CDLL(None, use_errno=True) # use_errno=True önemli
+            libc.mprotect.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
+            libc.mprotect.restype = ctypes.c_int
+
+        for sec, off in offsets.items():
+            flags = MemoryManager.get_native_flags(sec.flags)
+
+            addr = base_addr + off
+
+            size = max(len(sec.content), sec.size)
+            size = MemoryManager.align_up(size, PAGE)
 
             if sys.platform == "win32":
-                old_protect = ctypes.c_ulong()
-                ctypes.windll.kernel32.VirtualProtect(target_addr, aligned_size, native_flags, ctypes.byref(old_protect))
+                old = ctypes.c_ulong()
+                ctypes.windll.kernel32.VirtualProtect(
+                    addr,
+                    size,
+                    flags,
+                    ctypes.byref(old)
+                )
             else:
-                libc = ctypes.CDLL(None)
-                # [mprotect](https://linux.die.net) çağrısı ile izinleri kilitle
-                if libc.mprotect(target_addr, aligned_size, native_flags) != 0:
-                    raise RuntimeError("Failed to set memory permissions (mprotect).")
+                if libc.mprotect(addr, size, flags) != 0:
+                    err = ctypes.get_errno()
+                    raise RuntimeError(f"mprotect failed errno={err},{addr},{size},{flags}")
 
-        # 8: Jump to entry point
-        if entry_symbol not in symbols or not symbols[entry_symbol][1].defined:
-            raise ValueError(f"Entry symbol '{entry_symbol}' is undefined.")
-        entry_sec, entry_sym = symbols[entry_symbol]
-        entry_addr = base_addr + offsets[entry_sec] + entry_sym.offset
-        entry_func_type = ctypes.CFUNCTYPE(None)  # Assuming the entry point is a void function with no arguments
-        entry_func = entry_func_type(entry_addr)
-        entry_func()
+        # ==============================
+        # 6. STORE STATE
+        # ==============================
+        self.base_addr = base_addr
+        self.offsets = offsets
+        self.symbols = symbols
+
+    # --------------------------------------------------
+    # CALL FUNCTION
+    # --------------------------------------------------
+    def call(self, symbol_name, argtypes=None, restype=None, args=()):
+        if self.base_addr is None:
+            raise RuntimeError("assemble() not called")
+
+        if symbol_name not in self.symbols:
+            raise ValueError("Symbol not found")
+
+        sec, sym = self.symbols[symbol_name]
+
+        addr = self.base_addr + self.offsets[sec] + sym.offset
+
+        func_type = ctypes.CFUNCTYPE(restype, *(argtypes or []))
+        func = func_type(addr)
+
+        return func(*args)
